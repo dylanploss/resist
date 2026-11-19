@@ -2,7 +2,7 @@
 
 Resistivity QC and inversion platform for the Ekofisk well data.
 
-- **Backend:** Python, FastAPI (`backend/`). Health, curve inventory, and QC selection endpoints.
+- **Backend:** Python, FastAPI (`backend/`). Health, run list, curve inventory, curve data, and QC selection endpoints on the real Ekofisk data.
 - **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`).
 - **Data:** Ekofisk DLIS files in `data/`, with the reference notebook `view_resistivity_data_ekofisk.ipynb`.
 - **UDAR_Bench:** David's standalone browser example for 1D and 2.5D forward modeling and inversion (`UDAR_Bench/`). Open `UDAR_Bench/UDAR_Bench.html` in Chrome; it runs offline.
@@ -11,7 +11,7 @@ Resistivity QC and inversion platform for the Ekofisk well data.
 
 Follow [SETUP.md](SETUP.md) for Mac and Windows commands. In short:
 
-1. Start the backend: `cd backend` then `python app.py` (port 5000).
+1. Create the root `.venv`, install `backend/requirements.txt`, then start the backend from the repo root: `python -m backend.app` (port 5000).
 2. Start the frontend in a second terminal: `cd frontend` then `npm install` and `npm run dev` (port 5173).
 3. Open http://localhost:5173 and check the backend status.
 
