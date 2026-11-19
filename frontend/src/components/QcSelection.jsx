@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Accordion, AccordionDetails, AccordionSummary, Alert, Box, CircularProgress, Paper, Table, TableBody, TableCell,
-  TableHead, TableRow, Tooltip, Typography,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, CircularProgress, Paper, Table, TableBody,
+  TableCell, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import { FREQ_LABEL, STATUS, api, compareGroup, fmt, runPath } from '../api.js'
 import { useSelection } from '../selection.js'
@@ -92,7 +92,7 @@ function SelectedTable({ rows, checked, focus, onShowCurve }) {
   )
 }
 
-function QcSelection({ runs, run, onRunChange }) {
+function QcSelection({ runs, run, onRunChange, onSelectionChange, onOpenInversion }) {
   const [nSelect, setNSelect] = useState(8)
   const [qc, setQc] = useState({ key: null, body: null, error: null })
   const [checked, setChecked] = useState([])
@@ -147,6 +147,11 @@ function QcSelection({ runs, run, onRunChange }) {
   }
   const loading = Boolean(run) && qc.key !== qcKey
   const ready = qc.body && !loading
+
+  // The Inversion tab inverts exactly what is checked here.
+  useEffect(() => {
+    if (ready && run) onSelectionChange?.(run, checked)
+  }, [ready, run, checked, onSelectionChange])
   const runInfo = runs.data?.runs.find((r) => r.run === run)
   const arChecked = useMemo(() => checked.filter((n) => byName[n]?.family === 'AR').sort(), [checked, byName])
 
@@ -191,6 +196,12 @@ function QcSelection({ runs, run, onRunChange }) {
               onRemove={(name) => setSelection(checked.filter((n) => n !== name), [], [name])}
               onSave={saveSelection} onView3d={view3d} />
             {save.error && <Alert severity="error" sx={{ mt: 1 }}>Save failed: {save.error}</Alert>}
+            {onOpenInversion && (
+              <Button variant="outlined" size="small" sx={{ mt: 1 }} disabled={!checked.length}
+                onClick={onOpenInversion}>
+                Invert this selection →
+              </Button>
+            )}
           </Card>
         )}
       </Box>

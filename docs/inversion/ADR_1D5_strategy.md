@@ -1,5 +1,12 @@
 # ADR 1.5D Inversion Strategy for the Resist Platform
 
+> **Hackathon adjustment (Nov 2026).** The forward model and windowed LM approach below are implemented in
+> `backend/inversion/`. A misfit study on Z-20 (20100–20500 ft MD) shows that the theory does **not** fit every curve
+> equally. Phase resistivities agree within a few percent. 2 MHz attenuation reads 15–45% high, and the error grows
+> with resistivity. 500 kHz and 125 kHz attenuation show no stable correction. The algorithm therefore inverts phase
+> as primary data, applies a resistivity-dependent correction to 2 MHz attenuation, and uses low-frequency attenuation
+> for QC only. See [HACKATHON_PLAN.md](HACKATHON_PLAN.md) for the numbers, the correction table, and the 2-day schedule.
+
 ## Executive Summary
 
 For efficient 1.5D EM inversion of the Halliburton ADR tool on Ekofisk data:
@@ -145,36 +152,16 @@ For efficient 1.5D EM inversion of the Halliburton ADR tool on Ekofisk data:
 - Alternative: fit a simple borehole-correction term (e.g., resistivity-dependent calibration factor)
 - Validate against centralized vs. eccentric runs if available
 
-### 7. Next Steps for Implementation
+### 7. Implementation status
 
-1. **Prototype 1D forward model** (`backend/inversion/forward_vti.py`)
-   - Input: layer stack, dip, well trajectory at a station
-   - Output: 32 bins and harmonic features for all spacings/frequencies
-   - Benchmark against UDAR_Bench or empymod
+1. **1D forward model** – done: `backend/inversion/adr_forward.py` (empymod, TIV, dip, trajectory, compensation, whole-space transform).
+2. **Harmonic fitting** – use `backend/qc/metrics.harmonics` (bin mean and first-harmonic amplitude) when adding azimuthal data.
+3. **LM inversion core** – done for one window: `backend/inversion/invert.py` (trust-region LM, multi-start, per-curve weights and corrections). Windowed driver with overlap ties is next.
+4. **Pipeline/API integration** – `POST /invert/run` is planned for hackathon day 1.
+5. **Validation** – synthetic round trip in `backend/tests/test_inversion.py`; field misfit study in `backend/inversion/misfit_study.py`.
+6. **User interface** – inversion tab is planned for hackathon day 2.
 
-2. **Implement harmonic fitting** (`backend/data/harmonics.py`)
-   - Fit sinusoids to 32-bin image data
-   - Return mean, amplitude, phase, and residual noise per curve
-
-3. **Build LM inversion core** (`backend/inversion/invert_window.py`)
-   - Windowed Levenberg-Marquardt
-   - Multi-start with library lookup
-   - Regularization and continuity ties
-
-4. **Integrate with the data pipeline**
-   - Connect to David's loader and transition detector
-   - Use transition candidates as initial window boundaries
-   - Expose inversion results as backend API (`POST /invert/run`)
-
-5. **Validation and benchmarking**
-   - Synthetic round-trip tests
-   - Spot checks vs. 2D/2.5D on 1–2 intervals
-   - Cross-platform scaling (Windows laptop → multi-core server)
-
-6. **User interface** (Ove)
-   - Add inversion control panel to React frontend
-   - Display inverted resistivity models, boundary positions, uncertainty
-   - Export results (CSV, JSON, VTK for 3D visualization)
+See [HACKATHON_PLAN.md](HACKATHON_PLAN.md) for owners and the schedule.
 
 ---
 

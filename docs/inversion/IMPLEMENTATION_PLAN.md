@@ -1,5 +1,9 @@
 # Inversion Implementation Plan
 
+> **Superseded for the hackathon** by [HACKATHON_PLAN.md](HACKATHON_PLAN.md). The forward model and single-window
+> inversion now exist in `backend/inversion/adr_forward.py` and `backend/inversion/invert.py`. Harmonic features come
+> from `backend/qc/metrics.harmonics`. The task list below is kept as the longer-term backlog.
+
 **Objective:** Build a 1.5D EM inversion system for the Halliburton ADR tool on Ekofisk data, focusing on efficient windowed Levenberg-Marquardt inversion with trajectory and dip accommodation.
 
 **Timeline:** Four parallel workstreams over 6–8 weeks

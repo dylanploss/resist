@@ -1,0 +1,917 @@
+{
+  "well": "2/4-Z-20",
+  "run": "2_4-Z-20_18840-23791ft_RES_GEOSIGNAL.dlis",
+  "md_ft": [
+    20100,
+    20500
+  ],
+  "curves": "raw",
+  "assumptions": {
+    "receiver_sep_in": 8.0,
+    "transform": "homogeneous isotropic whole space",
+    "averaged_curve_physics": "ZZ coupling (azimuthal mean of tilted receiver)",
+    "reference_curves_zero_mean_bias": [
+      "ARH16P",
+      "ARH32P",
+      "ARH48P",
+      "ARM16P",
+      "ARM32P",
+      "ARM48P",
+      "ARL48P"
+    ]
+  },
+  "E1_no_correction": {
+    "step_ft": 2.0,
+    "stations": 201,
+    "boundaries_tvd_rel_ft": [
+      12.57,
+      25.52
+    ],
+    "rh": [
+      8.83,
+      43.33,
+      26.09
+    ],
+    "rv": [
+      8.83,
+      43.33,
+      26.09
+    ],
+    "dip_deg": -5.92,
+    "dip_azimuth_deg": 165.5,
+    "rms_percent": 18.38,
+    "rms_percent_by_curve": {
+      "ARH16P": 18.49,
+      "ARH32P": 19.21,
+      "ARH48P": 21.27,
+      "ARM16P": 14.78,
+      "ARM32P": 13.15,
+      "ARM48P": 13.42,
+      "ARL48P": 11.61,
+      "ARH16A": 25.53,
+      "ARH32A": 19.39,
+      "ARH48A": 19.63,
+      "ARM16A": 28.99,
+      "ARM32A": 12.01,
+      "ARM48A": 12.15,
+      "ARL48A": 20.06
+    },
+    "mean_residual_percent_by_curve": {
+      "ARH16P": -4.18,
+      "ARH32P": -4.05,
+      "ARH48P": 0.0,
+      "ARM16P": -5.23,
+      "ARM32P": -3.26,
+      "ARM48P": -0.75,
+      "ARL48P": -0.27,
+      "ARH16A": 18.74,
+      "ARH32A": 10.85,
+      "ARH48A": 9.2,
+      "ARM16A": 4.99,
+      "ARM32A": -6.72,
+      "ARM48A": -4.08,
+      "ARL48A": -12.3
+    },
+    "correction_factor_by_curve": {
+      "ARH16P": 1.0,
+      "ARH32P": 1.0,
+      "ARH48P": 1.0,
+      "ARM16P": 1.0,
+      "ARM32P": 1.0,
+      "ARM48P": 1.0,
+      "ARL48P": 1.0,
+      "ARH16A": 1.0,
+      "ARH32A": 1.0,
+      "ARH48A": 1.0,
+      "ARM16A": 1.0,
+      "ARM32A": 1.0,
+      "ARM48A": 1.0,
+      "ARL48A": 1.0
+    },
+    "nfev": 25
+  },
+  "E2_constant_correction": {
+    "step_ft": 2.0,
+    "stations": 201,
+    "boundaries_tvd_rel_ft": [
+      12.66,
+      25.36
+    ],
+    "rh": [
+      8.75,
+      42.94,
+      26.36
+    ],
+    "rv": [
+      8.75,
+      42.94,
+      26.36
+    ],
+    "dip_deg": -5.98,
+    "dip_azimuth_deg": 165.5,
+    "rms_percent": 16.24,
+    "rms_percent_by_curve": {
+      "ARH16P": 17.75,
+      "ARH32P": 18.61,
+      "ARH48P": 21.34,
+      "ARM16P": 13.37,
+      "ARM32P": 12.61,
+      "ARM48P": 13.42,
+      "ARL48P": 11.63,
+      "ARH16A": 16.1,
+      "ARH32A": 15.57,
+      "ARH48A": 16.94,
+      "ARM16A": 28.4,
+      "ARM32A": 9.43,
+      "ARM48A": 11.27,
+      "ARL48A": 13.58
+    },
+    "mean_residual_percent_by_curve": {
+      "ARH16P": -0.18,
+      "ARH32P": -0.18,
+      "ARH48P": -0.18,
+      "ARM16P": -0.19,
+      "ARM32P": -0.18,
+      "ARM48P": -0.18,
+      "ARL48P": -0.18,
+      "ARH16A": 0.0,
+      "ARH32A": 0.0,
+      "ARH48A": 0.0,
+      "ARM16A": -0.01,
+      "ARM32A": -0.0,
+      "ARM48A": -0.0,
+      "ARL48A": -0.0
+    },
+    "correction_factor_by_curve": {
+      "ARH16P": 0.9707,
+      "ARH32P": 0.9721,
+      "ARH48P": 1.0132,
+      "ARM16P": 0.9598,
+      "ARM32P": 0.9797,
+      "ARM48P": 1.005,
+      "ARL48P": 1.0094,
+      "ARH16A": 1.1997,
+      "ARH32A": 1.1199,
+      "ARH48A": 1.103,
+      "ARM16A": 1.0596,
+      "ARM32A": 0.9414,
+      "ARM48A": 0.9678,
+      "ARL48A": 0.8844
+    },
+    "nfev": 14
+  },
+  "E3_holdout_constant_correction": {
+    "calibrate_upper_test_lower": {
+      "calibration_bias_percent": {
+        "ARH16P": -1.11,
+        "ARH32P": -2.0,
+        "ARH48P": -0.3,
+        "ARM16P": 0.8,
+        "ARM32P": -0.07,
+        "ARM48P": 0.53,
+        "ARL48P": 1.96,
+        "ARH16A": 16.76,
+        "ARH32A": 9.36,
+        "ARH48A": 7.49,
+        "ARM16A": 18.91,
+        "ARM32A": 1.23,
+        "ARM48A": 0.65,
+        "ARL48A": -0.49
+      },
+      "test_rms_percent_without_correction": 23.11,
+      "test_rms_percent_with_correction": 21.78,
+      "test_rms_by_curve_without": {
+        "ARH16P": 20.18,
+        "ARH32P": 22.81,
+        "ARH48P": 27.49,
+        "ARM16P": 16.88,
+        "ARM32P": 15.06,
+        "ARM48P": 15.82,
+        "ARL48P": 12.93,
+        "ARH16A": 33.25,
+        "ARH32A": 25.65,
+        "ARH48A": 25.75,
+        "ARM16A": 39.69,
+        "ARM32A": 14.43,
+        "ARM48A": 12.31,
+        "ARL48A": 27.58
+      },
+      "test_rms_by_curve_with": {
+        "ARH16P": 19.21,
+        "ARH32P": 22.24,
+        "ARH48P": 28.13,
+        "ARM16P": 15.37,
+        "ARM32P": 14.48,
+        "ARM48P": 16.41,
+        "ARL48P": 13.45,
+        "ARH16A": 22.62,
+        "ARH32A": 21.64,
+        "ARH48A": 23.48,
+        "ARM16A": 44.93,
+        "ARM32A": 12.24,
+        "ARM48A": 12.04,
+        "ARL48A": 23.51
+      },
+      "test_model_without": {
+        "boundaries_tvd_rel_ft": [
+          13.67,
+          27.0
+        ],
+        "rh": [
+          9.7,
+          43.76,
+          26.26
+        ],
+        "rv": [
+          9.7,
+          43.76,
+          26.26
+        ],
+        "dip_deg": -6.54,
+        "dip_azimuth_deg": 164.8,
+        "rms_percent": 23.11,
+        "rms_percent_by_curve": {
+          "ARH16P": 20.18,
+          "ARH32P": 22.81,
+          "ARH48P": 27.49,
+          "ARM16P": 16.88,
+          "ARM32P": 15.06,
+          "ARM48P": 15.82,
+          "ARL48P": 12.93,
+          "ARH16A": 33.25,
+          "ARH32A": 25.65,
+          "ARH48A": 25.75,
+          "ARM16A": 39.69,
+          "ARM32A": 14.43,
+          "ARM48A": 12.31,
+          "ARL48A": 27.58
+        },
+        "mean_residual_percent_by_curve": {
+          "ARH16P": -4.83,
+          "ARH32P": -4.6,
+          "ARH48P": 0.76,
+          "ARM16P": -8.15,
+          "ARM32P": -3.69,
+          "ARM48P": 0.39,
+          "ARL48P": 0.96,
+          "ARH16A": 25.8,
+          "ARH32A": 17.38,
+          "ARH48A": 16.16,
+          "ARM16A": -3.14,
+          "ARM32A": -9.92,
+          "ARM48A": -3.94,
+          "ARL48A": -17.0
+        },
+        "correction_factor_by_curve": {
+          "ARH16P": 1.0,
+          "ARH32P": 1.0,
+          "ARH48P": 1.0,
+          "ARM16P": 1.0,
+          "ARM32P": 1.0,
+          "ARM48P": 1.0,
+          "ARL48P": 1.0,
+          "ARH16A": 1.0,
+          "ARH32A": 1.0,
+          "ARH48A": 1.0,
+          "ARM16A": 1.0,
+          "ARM32A": 1.0,
+          "ARM48A": 1.0,
+          "ARL48A": 1.0
+        },
+        "nfev": 25
+      },
+      "test_model_with": {
+        "boundaries_tvd_rel_ft": [
+          13.14,
+          25.8
+        ],
+        "rh": [
+          9.3,
+          42.76,
+          25.07
+        ],
+        "rv": [
+          9.3,
+          42.76,
+          25.07
+        ],
+        "dip_deg": -6.1,
+        "dip_azimuth_deg": 164.8,
+        "rms_percent": 21.78,
+        "rms_percent_by_curve": {
+          "ARH16P": 19.21,
+          "ARH32P": 22.24,
+          "ARH48P": 28.13,
+          "ARM16P": 15.37,
+          "ARM32P": 14.48,
+          "ARM48P": 16.41,
+          "ARL48P": 13.45,
+          "ARH16A": 22.62,
+          "ARH32A": 21.64,
+          "ARH48A": 23.48,
+          "ARM16A": 44.93,
+          "ARM32A": 12.24,
+          "ARM48A": 12.04,
+          "ARL48A": 23.51
+        },
+        "mean_residual_percent_by_curve": {
+          "ARH16P": -0.49,
+          "ARH32P": 0.49,
+          "ARH48P": 4.05,
+          "ARM16P": -5.69,
+          "ARM32P": -0.3,
+          "ARM48P": 3.2,
+          "ARL48P": 2.61,
+          "ARH16A": 11.73,
+          "ARH32A": 11.27,
+          "ARH48A": 11.95,
+          "ARM16A": -15.32,
+          "ARM32A": -7.42,
+          "ARM48A": -0.7,
+          "ARL48A": -13.05
+        },
+        "correction_factor_by_curve": {
+          "ARH16P": 0.9889,
+          "ARH32P": 0.98,
+          "ARH48P": 0.997,
+          "ARM16P": 1.008,
+          "ARM32P": 0.9993,
+          "ARM48P": 1.0053,
+          "ARL48P": 1.0196,
+          "ARH16A": 1.1676,
+          "ARH32A": 1.0936,
+          "ARH48A": 1.0749,
+          "ARM16A": 1.1891,
+          "ARM32A": 1.0123,
+          "ARM48A": 1.0065,
+          "ARL48A": 0.9951
+        },
+        "nfev": 18
+      }
+    },
+    "calibrate_lower_test_upper": {
+      "calibration_bias_percent": {
+        "ARH16P": -3.15,
+        "ARH32P": -2.75,
+        "ARH48P": 2.98,
+        "ARM16P": -6.64,
+        "ARM32P": -2.08,
+        "ARM48P": 2.14,
+        "ARL48P": 2.32,
+        "ARH16A": 27.03,
+        "ARH32A": 18.55,
+        "ARH48A": 17.37,
+        "ARM16A": -2.75,
+        "ARM32A": -9.6,
+        "ARM48A": -3.65,
+        "ARL48A": -17.14
+      },
+      "test_rms_percent_without_correction": 10.0,
+      "test_rms_percent_with_correction": 12.13,
+      "test_rms_by_curve_without": {
+        "ARH16P": 15.46,
+        "ARH32P": 11.67,
+        "ARH48P": 9.23,
+        "ARM16P": 11.4,
+        "ARM32P": 7.69,
+        "ARM48P": 6.0,
+        "ARL48P": 5.63,
+        "ARH16A": 13.77,
+        "ARH32A": 6.48,
+        "ARH48A": 5.87,
+        "ARM16A": 14.77,
+        "ARM32A": 6.42,
+        "ARM48A": 7.59,
+        "ARL48A": 11.05
+      },
+      "test_rms_by_curve_with": {
+        "ARH16P": 14.76,
+        "ARH32P": 10.64,
+        "ARH48P": 9.36,
+        "ARM16P": 12.46,
+        "ARM32P": 6.78,
+        "ARM48P": 6.24,
+        "ARL48P": 6.15,
+        "ARH16A": 14.99,
+        "ARH32A": 13.26,
+        "ARH48A": 14.01,
+        "ARM16A": 18.75,
+        "ARM32A": 9.58,
+        "ARM48A": 6.6,
+        "ARL48A": 17.77
+      },
+      "test_model_without": {
+        "boundaries_tvd_rel_ft": [
+          -38.81,
+          -32.41
+        ],
+        "rh": [
+          4.66,
+          9.82,
+          8.65
+        ],
+        "rv": [
+          4.66,
+          9.83,
+          8.65
+        ],
+        "dip_deg": -6.63,
+        "dip_azimuth_deg": 166.1,
+        "rms_percent": 10.0,
+        "rms_percent_by_curve": {
+          "ARH16P": 15.46,
+          "ARH32P": 11.67,
+          "ARH48P": 9.23,
+          "ARM16P": 11.4,
+          "ARM32P": 7.69,
+          "ARM48P": 6.0,
+          "ARL48P": 5.63,
+          "ARH16A": 13.77,
+          "ARH32A": 6.48,
+          "ARH48A": 5.87,
+          "ARM16A": 14.77,
+          "ARM32A": 6.42,
+          "ARM48A": 7.59,
+          "ARL48A": 11.05
+        },
+        "mean_residual_percent_by_curve": {
+          "ARH16P": -4.36,
+          "ARH32P": -3.95,
+          "ARH48P": -0.84,
+          "ARM16P": -2.9,
+          "ARM32P": -3.13,
+          "ARM48P": -1.87,
+          "ARL48P": -1.23,
+          "ARH16A": 11.33,
+          "ARH32A": 4.47,
+          "ARH48A": 2.91,
+          "ARM16A": 13.48,
+          "ARM32A": -3.31,
+          "ARM48A": -3.76,
+          "ARL48A": -4.68
+        },
+        "correction_factor_by_curve": {
+          "ARH16P": 1.0,
+          "ARH32P": 1.0,
+          "ARH48P": 1.0,
+          "ARM16P": 1.0,
+          "ARM32P": 1.0,
+          "ARM48P": 1.0,
+          "ARL48P": 1.0,
+          "ARH16A": 1.0,
+          "ARH32A": 1.0,
+          "ARH48A": 1.0,
+          "ARM16A": 1.0,
+          "ARM32A": 1.0,
+          "ARM48A": 1.0,
+          "ARL48A": 1.0
+        },
+        "nfev": 25
+      },
+      "test_model_with": {
+        "boundaries_tvd_rel_ft": [
+          -42.16,
+          -37.28
+        ],
+        "rh": [
+          5.74,
+          10.05,
+          8.55
+        ],
+        "rv": [
+          5.76,
+          10.09,
+          8.58
+        ],
+        "dip_deg": -7.89,
+        "dip_azimuth_deg": 166.1,
+        "rms_percent": 12.13,
+        "rms_percent_by_curve": {
+          "ARH16P": 14.76,
+          "ARH32P": 10.64,
+          "ARH48P": 9.36,
+          "ARM16P": 12.46,
+          "ARM32P": 6.78,
+          "ARM48P": 6.24,
+          "ARL48P": 6.15,
+          "ARH16A": 14.99,
+          "ARH32A": 13.26,
+          "ARH48A": 14.01,
+          "ARM16A": 18.75,
+          "ARM32A": 9.58,
+          "ARM48A": 6.6,
+          "ARL48A": 17.77
+        },
+        "mean_residual_percent_by_curve": {
+          "ARH16P": 0.35,
+          "ARH32P": 0.21,
+          "ARH48P": -2.31,
+          "ARM16P": 5.51,
+          "ARM32P": 0.17,
+          "ARM48P": -2.78,
+          "ARL48P": -2.65,
+          "ARH16A": -11.32,
+          "ARH32A": -10.97,
+          "ARH48A": -11.47,
+          "ARM16A": 17.6,
+          "ARM32A": 7.61,
+          "ARM48A": 0.37,
+          "ARL48A": 14.72
+        },
+        "correction_factor_by_curve": {
+          "ARH16P": 0.9685,
+          "ARH32P": 0.9725,
+          "ARH48P": 1.0298,
+          "ARM16P": 0.9336,
+          "ARM32P": 0.9792,
+          "ARM48P": 1.0214,
+          "ARL48P": 1.0232,
+          "ARH16A": 1.2703,
+          "ARH32A": 1.1855,
+          "ARH48A": 1.1737,
+          "ARM16A": 0.9725,
+          "ARM32A": 0.904,
+          "ARM48A": 0.9635,
+          "ARL48A": 0.8286
+        },
+        "nfev": 18
+      }
+    }
+  },
+  "E4_residual_vs_level_E1": {
+    "ARH16P": {
+      "intercept": -0.0234,
+      "slope": 0.0042
+    },
+    "ARH32P": {
+      "intercept": 0.0243,
+      "slope": -0.0365
+    },
+    "ARH48P": {
+      "intercept": 0.0607,
+      "slope": -0.0521
+    },
+    "ARM16P": {
+      "intercept": 0.0257,
+      "slope": -0.0426
+    },
+    "ARM32P": {
+      "intercept": 0.0039,
+      "slope": -0.0158
+    },
+    "ARM48P": {
+      "intercept": 0.0052,
+      "slope": -0.0074
+    },
+    "ARL48P": {
+      "intercept": -0.0329,
+      "slope": 0.0276
+    },
+    "ARH16A": {
+      "intercept": -0.1159,
+      "slope": 0.1664
+    },
+    "ARH32A": {
+      "intercept": -0.1205,
+      "slope": 0.144
+    },
+    "ARH48A": {
+      "intercept": -0.1202,
+      "slope": 0.1378
+    },
+    "ARM16A": {
+      "intercept": 0.2343,
+      "slope": -0.1884
+    },
+    "ARM32A": {
+      "intercept": 0.0334,
+      "slope": -0.0561
+    },
+    "ARM48A": {
+      "intercept": -0.0606,
+      "slope": 0.0374
+    },
+    "ARL48A": {
+      "intercept": -0.0205,
+      "slope": -0.0325
+    }
+  },
+  "split_md_ft": 20300,
+  "E5_phase_only_attenuation_check": {
+    "phase_only_model": {
+      "boundaries_tvd_rel_ft": [
+        12.71,
+        19.45
+      ],
+      "rh": [
+        6.37,
+        13.17,
+        26.79
+      ],
+      "rv": [
+        11.24,
+        23.25,
+        47.29
+      ],
+      "dip_deg": -9.85,
+      "dip_azimuth_deg": 165.5,
+      "rms_percent": 20.56,
+      "rms_percent_by_curve": {
+        "ARH16P": 20.49,
+        "ARH32P": 15.97,
+        "ARH48P": 16.33,
+        "ARM16P": 16.38,
+        "ARM32P": 13.26,
+        "ARM48P": 13.25,
+        "ARL48P": 11.73,
+        "ARH16A": 32.08,
+        "ARH32A": 24.76,
+        "ARH48A": 23.68,
+        "ARM16A": 34.78,
+        "ARM32A": 14.97,
+        "ARM48A": 12.59,
+        "ARL48A": 24.97
+      },
+      "mean_residual_percent_by_curve": {
+        "ARH16P": -1.01,
+        "ARH32P": -2.07,
+        "ARH48P": 0.94,
+        "ARM16P": -1.7,
+        "ARM32P": -0.09,
+        "ARM48P": 1.88,
+        "ARL48P": 2.24,
+        "ARH16A": 25.14,
+        "ARH32A": 16.82,
+        "ARH48A": 15.38,
+        "ARM16A": 9.8,
+        "ARM32A": -3.44,
+        "ARM48A": -0.83,
+        "ARL48A": -11.65
+      },
+      "correction_factor_by_curve": {
+        "ARH16P": 1.0,
+        "ARH32P": 1.0,
+        "ARH48P": 1.0,
+        "ARM16P": 1.0,
+        "ARM32P": 1.0,
+        "ARM48P": 1.0,
+        "ARL48P": 1.0,
+        "ARH16A": 1.0,
+        "ARH32A": 1.0,
+        "ARH48A": 1.0,
+        "ARM16A": 1.0,
+        "ARM32A": 1.0,
+        "ARM48A": 1.0,
+        "ARL48A": 1.0
+      },
+      "nfev": 25,
+      "step_ft": 4.0,
+      "stations": 101
+    },
+    "holdout": {
+      "calibrate_upper_test_lower": {
+        "none": {
+          "ARH16A": 40.54,
+          "ARH32A": 33.2,
+          "ARH48A": 32.36,
+          "ARM16A": 44.88,
+          "ARM32A": 20.02,
+          "ARM48A": 15.98,
+          "ARL48A": 35.04
+        },
+        "constant": {
+          "ARH16A": 25.4,
+          "ARH32A": 25.12,
+          "ARH48A": 25.49,
+          "ARM16A": 51.16,
+          "ARM32A": 21.3,
+          "ARM48A": 16.3,
+          "ARL48A": 32.95
+        },
+        "constant_parameters": {
+          "ARH16A": {
+            "factor_at_10_ohmm": 1.1926,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.1926
+          },
+          "ARH32A": {
+            "factor_at_10_ohmm": 1.1145,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.1145
+          },
+          "ARH48A": {
+            "factor_at_10_ohmm": 1.0948,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.0948
+          },
+          "ARM16A": {
+            "factor_at_10_ohmm": 1.204,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.204
+          },
+          "ARM32A": {
+            "factor_at_10_ohmm": 1.0203,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.0203
+          },
+          "ARM48A": {
+            "factor_at_10_ohmm": 1.0122,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.0122
+          },
+          "ARL48A": {
+            "factor_at_10_ohmm": 0.9788,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 0.9788
+          }
+        },
+        "gain": {
+          "ARH16A": 544.8,
+          "ARH32A": 7953135.98,
+          "ARH48A": 4308951293.32,
+          "ARM16A": 4654058299.37,
+          "ARM32A": 18843387591454.24,
+          "ARM48A": 809611651302543.6,
+          "ARL48A": 233170.83
+        },
+        "gain_parameters": {
+          "ARH16A": {
+            "factor_at_10_ohmm": 0.8671,
+            "gain_per_decade": -1.5098,
+            "factor_at_40_ohmm": 0.1069
+          },
+          "ARH32A": {
+            "factor_at_10_ohmm": 9.0532,
+            "gain_per_decade": 9.975,
+            "factor_at_40_ohmm": 9169774.703
+          },
+          "ARH48A": {
+            "factor_at_10_ohmm": 27.7995,
+            "gain_per_decade": 15.4946,
+            "factor_at_40_ohmm": 59257480847.1124
+          },
+          "ARM16A": {
+            "factor_at_10_ohmm": 34.6262,
+            "gain_per_decade": 15.728,
+            "factor_at_40_ohmm": 102002060478.0812
+          },
+          "ARM32A": {
+            "factor_at_10_ohmm": 135.2224,
+            "gain_per_decade": 23.1781,
+            "factor_at_40_ohmm": 1.217975033391256e+16
+          },
+          "ARM48A": {
+            "factor_at_10_ohmm": 280.2555,
+            "gain_per_decade": 26.7008,
+            "factor_at_40_ohmm": 3.334353062737255e+18
+          },
+          "ARL48A": {
+            "factor_at_10_ohmm": 4.462,
+            "gain_per_decade": 7.2548,
+            "factor_at_40_ohmm": 104082.7342
+          }
+        }
+      },
+      "calibrate_lower_test_upper": {
+        "none": {
+          "ARH16A": 21.6,
+          "ARH32A": 13.04,
+          "ARH48A": 11.12,
+          "ARM16A": 22.06,
+          "ARM32A": 7.58,
+          "ARM48A": 8.06,
+          "ARL48A": 9.54
+        },
+        "constant": {
+          "ARH16A": 13.63,
+          "ARH32A": 11.55,
+          "ARH48A": 12.43,
+          "ARM16A": 21.71,
+          "ARM32A": 13.87,
+          "ARM48A": 9.05,
+          "ARL48A": 24.78
+        },
+        "constant_parameters": {
+          "ARH16A": {
+            "factor_at_10_ohmm": 1.3119,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.3119
+          },
+          "ARH32A": {
+            "factor_at_10_ohmm": 1.2233,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.2233
+          },
+          "ARH48A": {
+            "factor_at_10_ohmm": 1.2148,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.2148
+          },
+          "ARM16A": {
+            "factor_at_10_ohmm": 1.0031,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 1.0031
+          },
+          "ARM32A": {
+            "factor_at_10_ohmm": 0.9147,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 0.9147
+          },
+          "ARM48A": {
+            "factor_at_10_ohmm": 0.9721,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 0.9721
+          },
+          "ARL48A": {
+            "factor_at_10_ohmm": 0.7991,
+            "gain_per_decade": 0.0,
+            "factor_at_40_ohmm": 0.7991
+          }
+        },
+        "gain": {
+          "ARH16A": 11.27,
+          "ARH32A": 6.18,
+          "ARH48A": 9.42,
+          "ARM16A": 14.34,
+          "ARM32A": 14.96,
+          "ARM48A": 16.51,
+          "ARL48A": 14.61
+        },
+        "gain_parameters": {
+          "ARH16A": {
+            "factor_at_10_ohmm": 1.1573,
+            "gain_per_decade": 0.1632,
+            "factor_at_40_ohmm": 1.4512
+          },
+          "ARH32A": {
+            "factor_at_10_ohmm": 1.1534,
+            "gain_per_decade": 0.0762,
+            "factor_at_40_ohmm": 1.2818
+          },
+          "ARH48A": {
+            "factor_at_10_ohmm": 1.1845,
+            "gain_per_decade": 0.0324,
+            "factor_at_40_ohmm": 1.2389
+          },
+          "ARM16A": {
+            "factor_at_10_ohmm": 1.2613,
+            "gain_per_decade": -0.3083,
+            "factor_at_40_ohmm": 0.8226
+          },
+          "ARM32A": {
+            "factor_at_10_ohmm": 1.0946,
+            "gain_per_decade": -0.2375,
+            "factor_at_40_ohmm": 0.7875
+          },
+          "ARM48A": {
+            "factor_at_10_ohmm": 1.1126,
+            "gain_per_decade": -0.178,
+            "factor_at_40_ohmm": 0.8693
+          },
+          "ARL48A": {
+            "factor_at_10_ohmm": 1.0118,
+            "gain_per_decade": -0.3307,
+            "factor_at_40_ohmm": 0.6397
+          }
+        }
+      }
+    },
+    "recommended_gain_correction_full_interval": {
+      "ARH16A": {
+        "factor_at_10_ohmm": 1.2078,
+        "gain_per_decade": 0.1251,
+        "factor_at_40_ohmm": 1.4365
+      },
+      "ARH32A": {
+        "factor_at_10_ohmm": 1.1394,
+        "gain_per_decade": 0.0871,
+        "factor_at_40_ohmm": 1.2857
+      },
+      "ARH48A": {
+        "factor_at_10_ohmm": 1.1287,
+        "gain_per_decade": 0.076,
+        "factor_at_40_ohmm": 1.2541
+      },
+      "ARM16A": {
+        "factor_at_10_ohmm": 1.1708,
+        "gain_per_decade": -0.2385,
+        "factor_at_40_ohmm": 0.8412
+      },
+      "ARM32A": {
+        "factor_at_10_ohmm": 1.01,
+        "gain_per_decade": -0.1624,
+        "factor_at_40_ohmm": 0.8064
+      },
+      "ARM48A": {
+        "factor_at_10_ohmm": 1.0182,
+        "gain_per_decade": -0.0943,
+        "factor_at_40_ohmm": 0.8934
+      },
+      "ARL48A": {
+        "factor_at_10_ohmm": 0.9438,
+        "gain_per_decade": -0.257,
+        "factor_at_40_ohmm": 0.6609
+      }
+    }
+  }
+}

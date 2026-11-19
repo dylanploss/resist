@@ -1,0 +1,4 @@
+/* Hide Slidev's "go to slide" dialog; its closed slide list otherwise hangs onto the slide */
+#slidev-goto-dialog {
+  display: none !important;
+}

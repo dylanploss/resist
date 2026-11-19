@@ -48,6 +48,21 @@ export const postQcSelect = (run, nSelect) =>
 // Helpers shared by the QC visualization components.
 export const runPath = (run) => `/runs/${encodeURIComponent(run)}`
 
+const postJson = (path, body) =>
+  request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+
+export const getSavedSelection = (run) => request(`${runPath(run)}/selection`)
+
+export const getAutoSelection = (run) => request(`${runPath(run)}/qc`)
+
+export const getInversionDefaults = (run) => request(`/inversion/defaults?run=${encodeURIComponent(run)}`)
+
+export const postInversionPlan = (body) => postJson('/inversion/plan', body)
+
+export const postInversionJob = (body) => postJson('/inversion/jobs', body)
+
+export const getInversionJob = (id) => request(`/inversion/jobs/${encodeURIComponent(id)}`)
+
 export const api = (path, options) => request(path, options)
 
 export const FREQ_LABEL = { 2000000: '2 MHz', 500000: '500 kHz', 125000: '125 kHz' }

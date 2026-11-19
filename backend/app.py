@@ -18,6 +18,7 @@ from backend.qc.selection import DEFAULT_SELECT, SELECT_RANGE, _json_safe, selec
 from backend.services import runs
 
 from backend.qc.api import router as qc_router
+from backend.inversion.api import router as inversion_router
 
 app = FastAPI(title="Resist backend")
 app.add_middleware(
@@ -27,6 +28,7 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 app.include_router(qc_router)
+app.include_router(inversion_router)
 
 
 def error(status: int, message: str) -> JSONResponse:
