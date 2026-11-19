@@ -127,8 +127,10 @@ def _correlation(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _redundant_with(name: str, scores: dict, chosen: list[str]) -> tuple[str, float] | None:
+    """Only same-spacing curves can be redundant; longer spacings differ where it matters, near boundaries."""
     for other in chosen:
-        if (scores[other]["family"] == "ZG") != (scores[name]["family"] == "ZG"):
+        if (scores[other]["family"] == "ZG") != (scores[name]["family"] == "ZG") or \
+                scores[other]["spacing_in"] != scores[name]["spacing_in"]:
             continue
         r = _correlation(scores[name]["_series"], scores[other]["_series"])
         if np.isfinite(r) and abs(r) > MAX_CORRELATION:
@@ -195,11 +197,18 @@ def select_curves(run, n_select: int = DEFAULT_SELECT) -> dict:
         return True
 
     fallback_used = set()
+    deepest_first = sorted(ranked, key=lambda n: (-scores[n]["spacing_in"], -scores[n]["score"]))
     for families, tier in SLOTS:
         if len(selected) >= n_select:
             break
-        if any(try_add(n, f"best clean {tier} {scores[n]['family']} curve") for n in ranked
-               if scores[n]["family"] in families and scores[n]["doi_tier"] == tier):
+        if tier == "deep":
+            filled = any(try_add(n, f"longest clean spacing ({scores[n]['spacing_in']:g} in) for deep "
+                                    f"{scores[n]['family']}") for n in deepest_first
+                         if scores[n]["family"] in families and scores[n]["doi_tier"] == tier)
+        else:
+            filled = any(try_add(n, f"best clean {tier} {scores[n]['family']} curve") for n in ranked
+                         if scores[n]["family"] in families and scores[n]["doi_tier"] == tier)
+        if filled:
             continue
         if tier != "deep" or families in fallback_used or any(
                 scores[n]["family"] in families and scores[n]["doi_tier"] == tier for n in selected):

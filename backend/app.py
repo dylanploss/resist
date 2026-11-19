@@ -1,8 +1,15 @@
 import os
+from pathlib import Path
+import sys
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# `python app.py` runs from backend/, but the modules import the `backend` package.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from backend.qc.api import router as qc_router  # noqa: E402
 
 app = FastAPI(title="Resist backend")
 app.add_middleware(
@@ -11,6 +18,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+app.include_router(qc_router)
 
 
 class QcSelectRequest(BaseModel):
