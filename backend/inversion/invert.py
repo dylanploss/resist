@@ -152,6 +152,8 @@ class FitConfig:
     sigma: float = 0.02                # decades, data standard deviation
     curve_sigma: dict | None = None    # label -> sigma in inversion units (overrides ``sigma``)
     azimuthal: bool = False            # forward model with directional ZR top/bottom and ZG channels
+    compute: str = "cpu"               # "cpu" (empymod + process pool) or "jax" (autodiff, CPU/GPU)
+    precision: int = 64                # JAX only: 64 or 32 bit
     curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
     level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
     max_nfev: int = 25
@@ -215,12 +217,25 @@ class Layout:
 # ---------------------------------------------------------------------------- parallel forward
 _FWD: ADRForward | None = None
 _TRAJ: Trajectory | None = None
+_TABLES: dict = {}
 
 
-def _init_worker(receiver_sep_in, traj, azimuthal=False):
+def shared_tables(receiver_sep_in=8.0, azimuthal=False):
+    """Transform tables computed once per process and handed to workers (each build takes seconds)."""
+    key = (receiver_sep_in, azimuthal)
+    if key not in _TABLES:
+        fwd = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=azimuthal)
+        _TABLES[key] = (fwd.tables(), fwd.ls_tables() if azimuthal and fwd.long_spacings else None)
+    return _TABLES[key]
+
+
+def _init_worker(receiver_sep_in, traj, azimuthal=False, tables=None):
     global _FWD, _TRAJ
     _FWD = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=azimuthal)
-    _FWD.tables()
+    if tables is not None:
+        _FWD._tables, _FWD._ls_tables = tables
+    else:
+        _FWD.tables()
     _TRAJ = traj
 
 
@@ -259,7 +274,11 @@ class FitResult:
 
 
 class Inverter:
-    """Parallel finite-difference Levenberg-Marquardt (trust-region) fit for one window."""
+    """Levenberg-Marquardt (trust-region) fit for one window.
+
+    ``cfg.compute == "cpu"``: empymod forward, finite-difference Jacobian over a process pool.
+    ``cfg.compute == "jax"``: JAX forward (CPU or GPU) with the exact Jacobian from ``jax.jacfwd``; no process pool.
+    """
 
     def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None):
         self.data, self.cfg = data, cfg
@@ -270,13 +289,23 @@ class Inverter:
         w = cfg.curve_weights or {}
         sig = cfg.curve_sigma or {}
         self.w = np.array([float(w.get(lab, 1.0)) / float(sig.get(lab, cfg.sigma)) for lab in data.labels])
-        self.pool = ProcessPoolExecutor(max_workers=workers or min(16, self.lay.n_earth + 1),
-                                        initializer=_init_worker,
-                                        initargs=(receiver_sep_in, data.traj, cfg.azimuthal))
+        self.pool, self._jax = None, None
+        if cfg.compute == "jax":
+            from backend.inversion.jax_forward import JaxTheory
+
+            fwd = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=cfg.azimuthal)
+            self._jax = JaxTheory(fwd, data.traj, cfg.n_layers, self.lay.n_aniso, cfg.fit_dip, az,
+                                  precision=cfg.precision)
+        else:
+            self.pool = ProcessPoolExecutor(max_workers=workers or min(16, self.lay.n_earth + 1),
+                                            initializer=_init_worker,
+                                            initargs=(receiver_sep_in, data.traj, cfg.azimuthal,
+                                                      shared_tables(receiver_sep_in, cfg.azimuthal)))
         self._cache = {}
 
     def close(self):
-        self.pool.shutdown()
+        if self.pool is not None:
+            self.pool.shutdown()
 
     def __enter__(self):
         return self
@@ -289,7 +318,11 @@ class Inverter:
         todo = [(k, x) for k, x in zip(keys, xs) if k not in self._cache]
         uniq = dict(todo)
         if uniq:
-            for k, p in zip(uniq, self.pool.map(_predict, [self.lay.model(x) for x in uniq.values()])):
+            if self._jax is not None:
+                preds = [self._jax(x[:self.lay.n_earth]) for x in uniq.values()]
+            else:
+                preds = self.pool.map(_predict, [self.lay.model(x) for x in uniq.values()])
+            for k, p in zip(uniq, preds):
                 self._cache[k] = p
         if len(self._cache) > 64:
             for k in list(self._cache)[:-32]:
@@ -325,16 +358,23 @@ class Inverter:
 
     def jac(self, x):
         ne = self.lay.n_earth
-        steps = self.lay.steps()
-        xs = [x]
-        for j in range(ne):
-            xp = x.copy(); xp[j] += steps[j]; xs.append(xp)
-        th = self._theory_batch(xs)
         n, m = self.data.obs.shape
-        J = np.zeros((len(self._resid(x, th[0])), self.lay.n_params))
-        for j in range(ne):
-            col = (th[j + 1] - th[0]) / steps[j] * self.w * self._dcorr()
-            J[:n * m, j] = np.where(np.isfinite(col) & (self.w > 0), col, 0.0).ravel()
+        if self._jax is not None:
+            jt = self._jax.jacobian(x[:ne])                                  # exact, (n, m, ne)
+            J = np.zeros((len(self._resid(x, self._theory_batch([x])[0])), self.lay.n_params))
+            cols = jt * (self.w * self._dcorr())[None, :, None]
+            cols = np.where(np.isfinite(cols) & (self.w > 0)[None, :, None], cols, 0.0)
+            J[:n * m, :ne] = cols.reshape(n * m, ne)
+        else:
+            steps = self.lay.steps()
+            xs = [x]
+            for j in range(ne):
+                xp = x.copy(); xp[j] += steps[j]; xs.append(xp)
+            th = self._theory_batch(xs)
+            J = np.zeros((len(self._resid(x, th[0])), self.lay.n_params))
+            for j in range(ne):
+                col = (th[j + 1] - th[0]) / steps[j] * self.w * self._dcorr()
+                J[:n * m, j] = np.where(np.isfinite(col) & (self.w > 0), col, 0.0).ravel()
         if self.cfg.fit_bias:
             nb = self.lay.n_curves
             J[:n * m, ne:] = np.tile(np.diag(self.w), (n, 1))

@@ -28,7 +28,7 @@ import uuid
 import numpy as np
 
 from backend.inversion.adr_forward import FT, FREQ_LETTER, LS_RECEIVER_IN, ADRForward
-from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
+from backend.inversion.invert import (FitConfig, Inverter, Layout, LevelCorrection, Z20_ATTENUATION_CORRECTION,
                                       default_starts, interval_from_run, noise_estimate)
 
 AR_CURVE = re.compile(r"^AR([HML])(\d+)([PA])(C?)$")
@@ -44,6 +44,34 @@ SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
 WORKERS = 6
 MAX_STATIONS = 250
 MAX_INTERVAL_FT = 1500.0
+MAX_SCAN_FT = 6000.0
+
+
+def compute_backend() -> str:
+    """'jax' (autodiff, CPU or GPU) or 'cpu' (empymod + process pool). Set with RESIST_COMPUTE."""
+    import os
+    want = os.environ.get("RESIST_COMPUTE", "cpu").lower()
+    if want == "jax":
+        try:
+            import jax  # noqa: F401
+            return "jax"
+        except ImportError:
+            return "cpu"
+    return "cpu"
+
+
+def compute_precision() -> int:
+    """JAX float precision (RESIST_PRECISION=32 for cheap GPUs; phase and geosignals pass the FP32 gate)."""
+    import os
+    return 32 if os.environ.get("RESIST_PRECISION", "64") == "32" else 64
+
+
+def compute_device() -> str:
+    if compute_backend() != "jax":
+        return "cpu (empymod, process pool)"
+    import jax
+    d = jax.devices()[0]
+    return f"{d.platform}: {getattr(d, 'device_kind', d)} (JAX, FP{compute_precision()})"
 
 # The 2 MHz attenuation bias is a property of the channel, so it applies to its top/bottom bins too.
 ATTENUATION_CORRECTION = {**Z20_ATTENUATION_CORRECTION,
@@ -201,9 +229,10 @@ def get(job_id: str) -> Job | None:
 
 
 def finished_jobs(run_id: str) -> list[Job]:
-    """Completed jobs of a run, newest first."""
+    """Completed single-window jobs of a run, newest first (scan results have a different shape)."""
     with _jobs_lock:
-        done = [j for j in _jobs.values() if j.run == run_id and j.status == "done"]
+        done = [j for j in _jobs.values() if j.run == run_id and j.status == "done"
+                and j.request.get("mode", "single") != "scan"]
     return sorted(done, key=lambda j: j.finished or 0, reverse=True)
 
 
@@ -211,7 +240,8 @@ def _execute(job: Job, run) -> None:
     with _slot:
         job.status, job.started, job.message = "running", time.time(), "loading interval"
         try:
-            job.result = run_inversion(run, job.request, job.plan, job)
+            runner = run_scan if job.request.get("mode") == "scan" else run_inversion
+            job.result = runner(run, job.request, job.plan, job)
             job.status, job.progress, job.message = "done", 1.0, "finished"
         except Exception as exc:  # reported to the client, not raised in the thread
             job.status, job.error, job.message = "error", f"{type(exc).__name__}: {exc}", "failed"
@@ -219,7 +249,8 @@ def _execute(job: Job, run) -> None:
             job.finished = time.time()
 
 
-def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dict:
+def _prepare(run, request: dict, plan: dict):
+    """Interval data, weights, noise and correction shared by single-window and scan inversions."""
     azimuthal = plan["azimuthal"]
     fwd = ADRForward(azimuthal=azimuthal)
     labels = fwd.channel_labels()
@@ -227,15 +258,141 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
     sources = {lab: plan["_sources"].get(lab, lab) for lab in labels}
     data = interval_from_run(run, request["md_min_ft"], request["md_max_ft"], fwd, request["step_ft"],
                              sources, required=list(used))
-    if len(data.md_ft) > MAX_STATIONS:
-        raise ValueError(f"{len(data.md_ft)} stations exceed {MAX_STATIONS}; shorten the interval or increase the step")
     weights = {lab: used[lab]["weight"] if lab in used else 0.0 for lab in labels}
-    w = np.array([weights[lab] for lab in labels])
-    # Averaged curves keep the 2% floor; single bins and geosignals are weighted by their own measured noise.
     sigma = {lab: SIGMA_FLOOR[u] if lab.startswith("AR") else noise_estimate(data.obs[:, j], SIGMA_FLOOR[u])
              for j, (lab, u) in enumerate(zip(labels, data.units))}
     lc = LevelCorrection.from_table(labels, {lab: ATTENUATION_CORRECTION[lab] for lab in used
                                              if lab in ATTENUATION_CORRECTION}) if plan["calibration"] else None
+    return fwd, labels, used, data, weights, sigma, lc
+
+
+def scan_windows(md, window_ft, overlap):
+    """[(start, end)] covering md with windows of window_ft and the given fractional overlap."""
+    lo, hi = float(md.min()), float(md.max())
+    if hi - lo <= window_ft:
+        return [(lo, hi)]
+    step = max(window_ft * (1.0 - overlap), 1.0)
+    starts = list(np.arange(lo, hi - window_ft + 1e-6, step))
+    if starts[-1] + window_ft < hi:
+        starts.append(hi - window_ft)
+    return [(s, s + window_ft) for s in starts]
+
+
+def stitch(data, windows, models, chis):
+    """Per-station curtain: each station takes the model of the window whose centre is nearest.
+    Stations outside every given window (e.g. during a running scan) are left empty (null)."""
+    md = data.md_ft
+    starts = np.array([a for a, _ in windows], float)
+    ends = np.array([b for _, b in windows], float)
+    centres = 0.5 * (starts + ends)
+    pick = []
+    for md_i in md:
+        d = np.where((md_i >= starts - 1e-6) & (md_i <= ends + 1e-6), np.abs(centres - md_i), np.inf)
+        pick.append(int(np.argmin(d)) if np.isfinite(d).any() else -1)
+    pick = np.array(pick)
+    k = len(models[0].rh)
+    bounds = np.full((k - 1, len(md)), np.nan)
+    rh = np.full((k, len(md)), np.nan); rv = np.full((k, len(md)), np.nan)
+    for w, m in enumerate(models):
+        rows = pick == w
+        if not rows.any():
+            continue
+        geo = model_geometry(data.subset(rows), m)
+        for b in range(k - 1):
+            bounds[b, rows] = np.array(geo["boundary_tvd_ft"][b], dtype=float)
+        rh[:, rows] = m.rh[:, None]; rv[:, rows] = m.rv[:, None]
+    return {
+        "md_ft": _none(md), "tvd_ft": _none(data.tvd_ft),
+        "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1)))),
+        "window_index": pick.tolist(),
+        "boundary_tvd_ft": [_none(b) for b in bounds],
+        "rh": [_none(r) for r in rh], "rv": [_none(r) for r in rv],
+        "windows": [{"md_ft": [round(float(a), 1), round(float(b), 1)], "misfit_normalised": round(float(c), 2),
+                     "dip_deg": round(float(m.dip_deg), 2), "rh": np.round(m.rh, 2).tolist(),
+                     "rv": np.round(m.rv, 2).tolist()} for (a, b), m, c in zip(windows, models, chis)],
+    }
+
+
+def run_scan(run, request: dict, plan: dict, job: Job | None = None) -> dict:
+    """Sliding-window 1.5D inversion of a long interval with the batched JAX LM (GPU when available)."""
+    if compute_backend() != "jax":
+        raise ValueError("the sliding-window scan needs the JAX backend: start the backend with RESIST_COMPUTE=jax")
+    from types import SimpleNamespace
+
+    from backend.inversion.batched import solve_chunked, solver, window_arrays
+
+    t0 = time.time()
+    fwd, labels, used, data, weights, sigma, lc = _prepare(run, request, plan)
+    k = request["layers"]
+    w = np.array([weights[lab] for lab in labels])
+    windows = scan_windows(data.md_ft, request["window_ft"], request["overlap"])
+    cfg = FitConfig(n_layers=k, curve_weights=weights, curve_sigma=sigma, azimuthal=plan["azimuthal"])
+    subsets, arrays, x0, owner = [], [], [], []
+    size = max(int(((data.md_ft >= a - 1e-6) & (data.md_ft <= b + 1e-6)).sum()) for a, b in windows)
+    from backend.inversion.batched import pad_size
+    size = pad_size(size)
+    for i, (a, b) in enumerate(windows):
+        rows = (data.md_ft >= a - 1e-6) & (data.md_ft <= b + 1e-6)
+        sub = data.subset(rows)
+        if len(sub.md_ft) < 3:
+            continue
+        az = float(np.rad2deg(np.arctan2(sub.traj.axis[:, 1].mean(), sub.traj.axis[:, 0].mean())))
+        lay = Layout(cfg, len(labels), az)
+        tvd = sub.tvd_rel_ft(sub.tvd_ft)
+        lo, hi = lay.bounds(tvd.min() - 40, tvd.max() + 40)
+        shim = SimpleNamespace(lay=lay, cfg=cfg)
+        shim.x_from = lambda *args, _s=shim: Inverter.x_from(_s, *args)
+        win = window_arrays(sub, weights, sigma, lc, lo, hi, size=size, dip_az=az)
+        for x in default_starts(shim, sub, k, weights=w):
+            x0.append(np.clip(x, lo + 1e-9, hi - 1e-9)); arrays.append(win); owner.append(i)
+        subsets.append((i, sub, lay))
+    fn = solver(fwd, k, Layout(cfg, len(labels), 0.0).n_aniso, cfg.fit_dip, iters=10 if request["quick"] else 25)
+    from backend.inversion.batched import default_chunk
+    chunk = default_chunk()
+    x0 = np.array(x0)
+    xs, cs, chis = [], [], []
+    owner = np.array(owner)
+
+    def best_models(n_done):
+        """Best start per window among the first n_done fits (only windows whose starts are all done)."""
+        xs_, cs_, chis_ = np.concatenate(xs), np.concatenate(cs), np.concatenate(chis)
+        out = []
+        for i, sub, lay in subsets:
+            rows = np.flatnonzero(owner == i)
+            if rows.size == 0 or rows.max() >= n_done:
+                continue
+            best = rows[np.nanargmin(np.where(np.isfinite(cs_[rows]), cs_[rows], np.inf))]
+            out.append((windows[i], lay.model(xs_[best]), chis_[best]))
+        return out
+
+    for start in range(0, len(arrays), chunk):
+        x, c, chi = solve_chunked(fn, x0[start:start + chunk], arrays[start:start + chunk], chunk=chunk)
+        xs.append(x); cs.append(c); chis.append(chi)
+        if job is not None:
+            done = start + len(x)
+            job.progress = min(0.99, done / len(arrays))
+            job.message = f"scan: {done}/{len(arrays)} window fits ({len(subsets)} windows x starts)"
+            sofar = best_models(done)
+            if sofar:
+                part = stitch(data, [w_ for w_, _, _ in sofar], [m for _, m, _ in sofar], [c_ for _, _, c_ in sofar])
+                job.partial = {**part, "mode": "scan", "layers": k, "evaluation": done, "stage": "scan",
+                               "misfit_normalised": round(float(np.nanmedian([c_ for _, _, c_ in sofar])), 2)}
+    found = best_models(len(arrays))
+    kept, models, kept_chi = [w_ for w_, _, _ in found], [m for _, m, _ in found], [c_ for _, _, c_ in found]
+    out = stitch(data, kept, models, kept_chi)
+    out.update({"mode": "scan", "well": data.well, "stations": int(len(data.md_ft)), "layers": k,
+                "window_ft": request["window_ft"], "overlap": request["overlap"], "fits": int(len(arrays)),
+                "device": compute_device(), "elapsed_s": round(time.time() - t0, 1),
+                "misfit_normalised": round(float(np.nanmedian(kept_chi)), 2)})
+    return out
+
+
+def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dict:
+    azimuthal = plan["azimuthal"]
+    fwd, labels, used, data, weights, sigma, lc = _prepare(run, request, plan)
+    if len(data.md_ft) > MAX_STATIONS:
+        raise ValueError(f"{len(data.md_ft)} stations exceed {MAX_STATIONS}; shorten the interval or increase the step")
+    w = np.array([weights[lab] for lab in labels])
     k = request["layers"]
     fine_nfev = 10 if request["quick"] else 20
     coarse = len(data.md_ft) > 60
@@ -261,7 +418,8 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
                            "model": model_geometry(data, inv.lay.model(x))}
 
     t0 = time.time()
-    common = dict(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal)
+    common = dict(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal,
+                  compute=compute_backend(), precision=compute_precision())
     x0 = None
     if coarse:
         sub = data.subset(np.arange(len(data.md_ft)) % 2 == 0)
@@ -353,4 +511,5 @@ def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
         "rms_percent_used": round(float(100 * (10 ** np.sqrt(np.mean(res_pct ** 2)) - 1)), 2) if res_pct.size else None,
         "misfit_normalised": round(float(np.sqrt(np.mean(chi ** 2))), 2) if chi.size else None,
         "stations": int(len(data.md_ft)), "forward_evaluations": int(res.nfev), "elapsed_s": round(elapsed, 1),
+        "device": compute_device(),
     }

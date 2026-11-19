@@ -25,7 +25,11 @@ import numpy as np
 
 FT = 0.3048
 INCH = 0.0254
-HTARG = {"dlf": "key_201_2012"}
+# Analytical direct field and standard (not lagged) DLF: matches the closed-form whole-space solution to ~1e-13 and
+# the JAX kernel (jax_forward.py) to round-off. The default numerical direct field is off by up to ~1e-3 at 2 MHz,
+# which is several percent in attenuation resistivity at high resistivity.
+HTARG = {"dlf": "key_201_2012", "pts_per_dec": 0}
+XDIRECT = True
 
 
 @dataclass(frozen=True)
@@ -165,7 +169,7 @@ class ADRForward:
 
         h = empymod.bipole(pts(self.tx_offsets), pts(self.rx_offsets), depth=list(depth), res=list(res),
                            freqtime=self.freqs, aniso=list(aniso), msrc=True, mrec=True, verb=0,
-                           htarg=HTARG)
+                           htarg=HTARG, xdirect=XDIRECT)
         h = np.conj(np.asarray(h).reshape(len(self.freqs), 2, len(self.tx_offsets)))  # e^{-iwt}
         ns = len(self.spacings)
         out_p, out_a = [], []
@@ -217,7 +221,7 @@ class ADRForward:
         rdirs = [c * t_f + s * look[k] for _, k in rx]
         v = empymod.bipole(points(tx_off, [t_f] * len(tx_off)), points([o for o, _ in rx], rdirs),
                            depth=list(depth), res=list(res), freqtime=self.freqs, aniso=list(aniso),
-                           msrc=True, mrec=True, verb=0, htarg=HTARG)
+                           msrc=True, mrec=True, verb=0, htarg=HTARG, xdirect=XDIRECT)
         v = np.conj(np.asarray(v).reshape(len(self.freqs), len(rx), len(tx_off)))
         R = {(i, k): 2 * i + (0 if k == "T" else 1) for i in range(len(rx_off)) for k in "TB"}
         out = {k: ([], []) for k in ("avg", "T", "B", "LT", "LB")}
@@ -260,10 +264,12 @@ class ADRForward:
 
     # ------------------------------------------------------------------ transforms
     def tables(self):
+        """Whole-space transform tables. The tool lies along the bedding (horizontal): physically identical to any
+        orientation in a whole space, but empymod's zero-offset (tool along the normal) path is ~2e-4 dB off."""
         if self._tables is None:
             ph, at = [], []
             for r in self.rho_grid:
-                p, a = self._raw([], [r], [1.0], 0.0, 1.0)
+                p, a = self._raw([], [r], [1.0], 0.0, 0.0)
                 ph.append(p); at.append(a)
             self._tables = (np.array(ph), np.array(at))   # (n_rho, n_chan), both decrease with rho
         return self._tables
@@ -283,7 +289,7 @@ class ADRForward:
     def ls_tables(self):
         """Whole-space transform tables for the guessed long-spacing geometry."""
         if self._ls_tables is None:
-            t_f, h_f = np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
+            t_f, h_f = np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, -1.0])
             ph, at = [], []
             for r in self.rho_grid:
                 out, _ = self._raw_azimuthal([], [r], [1.0], 0.0, t_f, h_f, 1)

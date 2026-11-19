@@ -1,5 +1,50 @@
 # Plan: GPU acceleration of the 1D (1.5D) inversion workflow
 
+## Status (paused 2026-11-19, branch `feature/gpu-jax`)
+
+**Done**
+- **Phase 1:** transform tables are built once per process and handed to workers. CPU baseline is **296 s**
+  (Z-20 20300–20400 ft, 26 stations, 14 channels, 3 layers, Quick; `python -m backend.inversion.benchmark`).
+- **Phases 2–3:** `backend/inversion/jax_forward.py` ports the UDAR_Bench layered-TIV engine to JAX, with
+  displacement currents and the full ADR channel set. Parity:
+  - Tensor vs the closed-form whole-space solution: 2e-16.
+  - Tensor vs empymod (analytical direct field): 4e-13.
+  - All 70 ADR channels vs the empymod path: ≤ 4e-10 %.
+- **empymod path fixes:** `xdirect=True` with standard DLF, and tables built for a horizontal tool. The old
+  numerical direct field and zero-offset tables were off by up to about 2e-4 dB, which is several % in
+  attenuation-derived resistivity at high resistivity.
+- **FP32 gate:** raw FP32 errors are ≤ 1e-5° and ≤ 7e-5 dB, which passes for phase and geosignals. Attenuation
+  resistivity above about 30 Ω·m can shift about 1%. FP64 is the default; set `RESIST_PRECISION=32` for T4/A10/L4.
+- **Phase 4:** `RESIST_COMPUTE=jax` gives an exact `jacfwd` Jacobian with no process pool. Compiled kernels are
+  bucketed to 32-station shapes and cached on disk (`~/.cache/resist-jax`, or `RESIST_JAX_CACHE`).
+  On CPU: **73 s** warm / 108 s cold, vs 296 s, with the same answer.
+- **Phase 5 (partly done):** `backend/inversion/batched.py` is a vmapped bounded LM using a column-wise JVP
+  Jacobian, with memory-bounded chunks (`RESIST_SCAN_CHUNK`).
+  - `service.run_scan` runs sliding windows × 3 starts, picks the best start, stitches a per-station curtain and
+    publishes a live partial result.
+  - API: `mode="scan"`, `window_ft` and `overlap` on `/inversion/jobs`; `/inversion/defaults` reports `device`
+    and `scan_available`.
+  - Tested on CPU: 3 windows × 3 starts on 100 ft took 349 s.
+- **Tests:** `backend/tests/test_jax_forward.py` has 4 fast parity tests (passing) and 1 slow batched-LM test
+  (`RESIST_SLOW_TESTS=1`), currently failing (see below). All other 76 backend tests pass.
+
+**Resume here tomorrow**
+1. **Batched LM local minimum.** A single start on the wrong side converges to 10.3 ft (truth 4 ft).
+   - Run the multi-start check: starts −6, +0.5, +2 and +6 ft in the slow test setup.
+   - If the best start recovers the truth, change the test to multi-start, as the service does.
+   - If not, add a coarse grid over the first boundary, or more LM iterations and damping restarts.
+2. **Phase 6, UI:**
+   - Mode switch (single window / sliding-window scan) with a window-length field.
+   - Scan curtain as a heatmap of log Rh within the ±band around the well, plus well path and boundaries.
+   - Live partial curtain for scans, and the compute device shown in the settings card.
+3. **Phase 7, Azure:** Dockerfile (CUDA 12, `jax[cuda12]`), push to ACR, NC T4 v3 or NV A10 v5 VM, DLIS via Blob
+   (blobfuse2), `RESIST_WORKER_URL` job forwarding from the local backend, and auto-shutdown. Then run the
+   benchmark on the GPU (FP64 and FP32).
+4. **Phase 8:** benchmark table (CPU empymod, CPU JAX, Azure GPU), update `HACKATHON_PLAN.md` and the API
+   contract, then merge `feature/gpu-jax` into `main` after review.
+
+Note: WSL2 is not installed on the laptop, so local JAX is CPU only. GPU runs need Azure (or `wsl --install`).
+
 ## Decisions (confirmed)
 - **Cloud and GPU:** Azure, on a cheaper GPU class (NC T4 v3, NV A10 v5, or an L4 SKU if available). FP64 is weak on
   these cards, so the spike must show whether FP32 is accurate enough. If FP32 fails, use mixed precision: FP64 only

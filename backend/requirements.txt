@@ -9,3 +9,4 @@ pandas>=2.1
 matplotlib>=3.8
 scipy>=1.11
 empymod>=2.3
+jax>=0.4.30   # RESIST_COMPUTE=jax (CPU); GPU: pip install 'jax[cuda12]' on Linux

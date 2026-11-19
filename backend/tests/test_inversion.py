@@ -10,7 +10,7 @@ class ForwardTests(unittest.TestCase):
     def test_homogeneous_transform_recovers_resistivity(self):
         fwd = ADRForward()
         for rho in (2.0, 20.0, 200.0):
-            rp, ra = fwd.simulate_homogeneous(rho, rho, 1.0)
+            rp, ra = fwd.simulate_homogeneous(rho, rho, 0.0)      # same (horizontal) geometry as the tables
             np.testing.assert_allclose(rp, rho, rtol=2e-3)
             np.testing.assert_allclose(ra, rho, rtol=2e-3)
 
