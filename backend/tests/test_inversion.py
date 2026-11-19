@@ -109,6 +109,13 @@ class PlanTests(unittest.TestCase):
         image = np.array([[10.0, 10.0, 10.0, 10.0], [5.0, 20.0, np.nan, -999.25]])
         np.testing.assert_allclose(azimuthal_average(image), [10.0, 8.0])
 
+    def test_slices_tile_the_interval(self):
+        from backend.inversion.service import slice_centres
+
+        np.testing.assert_allclose(slice_centres(100.0, 120.0, 4.0), [102, 106, 110, 114, 118])
+        np.testing.assert_allclose(slice_centres(100.0, 121.0, 4.0), [102, 106, 110, 114, 118, 122])
+        np.testing.assert_allclose(slice_centres(100.0, 102.0, 4.0), [102])
+
 
 class DirectionalForwardTests(unittest.TestCase):
     @classmethod
