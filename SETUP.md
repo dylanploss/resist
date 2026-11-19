@@ -9,7 +9,7 @@ Verified on Windows 11 with Python 3.13. The macOS commands follow the same step
 | Tool | Version | Check |
 |------|---------|-------|
 | Python | 3.11 or newer (3.13 verified) | macOS: `python3 --version` · Windows: `python --version` |
-| Node.js | 18 or newer | `node --version` |
+| Node.js | 20.19+ or 22.12+ (Vite 7 requirement; 22.23 verified) | `node --version` |
 | Git | any | `git --version` |
 
 Python 3.11 is the minimum because `dlisio` 1.0.5 publishes wheels only for 3.11 and newer.
@@ -71,15 +71,55 @@ Set them for one terminal session:
 
 ## Frontend (JavaScript, Vite + React + Material UI)
 
-Run the frontend in a second terminal while the backend runs.
+Run the frontend in a second terminal while the backend runs. All commands run inside `frontend/`.
 
 | Action | macOS | Windows (PowerShell) |
 |--------|-------|----------------------|
 | Install | `cd frontend && npm install` | `cd frontend; npm install` |
 | Run dev server | `npm run dev` | `npm run dev` |
 | Build | `npm run build` | `npm run build` |
+| Lint | `npm run lint` | `npm run lint` |
+| Check the UDAR core copy | `npm run check:udar` | `npm run check:udar` |
+| Recopy the UDAR core | `npm run sync:udar` | `npm run sync:udar` |
 
-Open http://localhost:5173. The page shows the backend status. To point at another backend, set `VITE_API_URL` before `npm run dev`.
+Open http://localhost:5173. The pages are:
+
+| Page | Shows | Needs the backend |
+|------|-------|-------------------|
+| Overview | Backend health and the list of runs | Yes |
+| Data | Run picker, curve inventory (family, frequency, spacing), curves vs depth for up to 8 curves | Yes |
+| QC selection | `POST /qc/select` result: selected curves with reasons, rejected curves with reasons, scores, warnings | Yes |
+| Modelling (UDAR) | UDAR_Bench 1D tabs: Tool, Geology & well, Forward, Inversion | No; runs in the browser |
+
+Verified on Windows 11 with Node 22.23 and Chrome. The Modelling page keeps its settings in the browser's local storage; **Reset all settings** restores the defaults.
+
+### Backend URL
+
+The frontend calls `VITE_API_URL`, default `http://localhost:5000`. To change it, copy `frontend/.env.example` to `frontend/.env.local` and edit the value, or set the variable for one terminal session before `npm run dev`:
+
+| macOS | Windows (PowerShell) |
+|-------|----------------------|
+| `VITE_API_URL=http://localhost:5001 npm run dev` | `$env:VITE_API_URL = "http://localhost:5001"; npm run dev` |
+
+Backend errors appear on the page with the backend's `error` message and HTTP status.
+
+### UDAR compute core
+
+`frontend/src/compute/udar/` holds byte-identical copies of `UDAR_Bench/source/src/*.js`. Do not edit them there. Edit the originals in `UDAR_Bench/source/src/`, then run `npm run sync:udar` and `npm run check:udar`. `check:udar` exits with an error when a copy differs from the original.
+
+To run the UDAR_Bench core tests (from `UDAR_Bench/source/`, each takes a few seconds):
+
+    node tests/test_engine1d.js
+    node tests/test_model.js
+    node tests/test_invert.js
+
+### UDAR_Bench standalone
+
+The original app is a single HTML file. It is not stored in the repo, so build it first, from `UDAR_Bench/source/`:
+
+    node build/build.js
+
+Then open `UDAR_Bench/source/build/udar.html` in Chrome. It runs offline and includes the 2D and 2.5D modes that the frontend does not have yet.
 
 ## Troubleshooting
 
@@ -90,4 +130,5 @@ Open http://localhost:5173. The page shows the backend status. To point at anoth
 - **`/runs` returns 503:** the data folder is missing or empty. Check that `data/` holds the `.dlis` files, or set `DATA_DIR` to the folder that does.
 - **Frontend says backend not reachable:** confirm the backend is running and `/health` responds. The backend allows only the origins `http://localhost:5173` and `http://127.0.0.1:5173`, so a frontend on another port is blocked by CORS.
 - **Wrong Python on macOS:** use `python3`, not `python`, when creating the venv. After activation, `python` points to the venv.
-- **Node version too old:** Vite needs Node 18 or newer. Check with `node --version`.
+- **Node version too old:** Vite 7 needs Node 20.19+ or 22.12+. Check with `node --version`.
+- **Modelling (UDAR) page shows old settings:** settings are kept in local storage. Press **Reset all settings** on that page.
