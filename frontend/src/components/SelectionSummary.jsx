@@ -1,7 +1,7 @@
 import { Alert, Box, Button, Chip, Stack, Typography } from '@mui/material'
 import { FREQ_LABEL, STATUS } from '../api.js'
 
-function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, onView3d, saving, saved }) {
+function SelectionSummary({ rows, checked, onRemove, onSave, onView3d, saving, saved }) {
   const byName = Object.fromEntries(rows.map((r) => [r.name, r]))
   const chosen = checked.map((n) => byName[n]).filter(Boolean)
   const count = (test) => chosen.filter(test).length
@@ -27,8 +27,7 @@ function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, on
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1.5 }}>
         {chosen.map((r) => (
           <Chip key={r.name} size="small" label={r.name} onDelete={() => onRemove(r.name)}
-            onClick={onView3d && (() => onView3d(r.name))} title={onView3d && `View ${r.name} in 3D`}
-            sx={{ fontFamily: 'monospace', borderColor: STATUS[r.status].color }} variant="outlined" />
+                      onClick={onView3d && (() => onView3d(r.name))} title={onView3d && `View ${r.name} in 3D`}            sx={{ fontFamily: 'monospace', borderColor: STATUS[r.status].color }} variant="outlined" />
         ))}
       </Box>
       <Stack spacing={0.75} sx={{ mb: 1.5 }}>
@@ -45,11 +44,7 @@ function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, on
       <Stack spacing={0.5} sx={{ mb: 1.5 }}>
         {warnings.map((w) => <Alert key={w} severity="warning" sx={{ py: 0 }}>{w}</Alert>)}
       </Stack>
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-        <Button variant="outlined" size="small" onClick={onReset}>Reset to auto-picks</Button>
-        <Button variant="outlined" size="small" onClick={onPlot} disabled={!chosen.length}>
-          Plot selection ↓
-        </Button>
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button variant="contained" size="small" onClick={onSave}
           disabled={saving || chosen.length < 1 || chosen.length > 10}>
           {saving ? 'Saving…' : 'Save selection'}
