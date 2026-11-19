@@ -63,6 +63,14 @@ export const postInversionJob = (body) => postJson('/inversion/jobs', body)
 
 export const getInversionJob = (id) => request(`/inversion/jobs/${encodeURIComponent(id)}`)
 
+export const getFacetDefaults = (run) => request(`/inversion3d/defaults?run=${encodeURIComponent(run)}`)
+
+export const postFacetPlan = (body) => postJson('/inversion3d/plan', body)
+
+export const postFacetJob = (body) => postJson('/inversion3d/jobs', body)
+
+export const getFacetJob = (id) => request(`/inversion3d/jobs/${encodeURIComponent(id)}`)
+
 export const api = (path, options) => request(path, options)
 
 export const FREQ_LABEL = { 2000000: '2 MHz', 500000: '500 kHz', 125000: '125 kHz' }

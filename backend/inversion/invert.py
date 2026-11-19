@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import least_squares
 
+from backend.data.quadrants import quadrant
 from backend.inversion.adr_forward import FT, ADRForward, LayerModel, Trajectory
 
 DEFAULT_REFERENCE = ("ARH16P", "ARH32P", "ARH48P", "ARM16P", "ARM32P", "ARM48P", "ARL48P")
@@ -79,9 +80,12 @@ def azimuthal_average(image):
 
 
 def _source_values(c, src, idx):
-    """A source is a curve name, or (image name, bin index) for one azimuthal bin."""
+    """A source is a curve name, ``(image, bin index)`` for one bin, or ``(image, side)`` for a quadrant sector."""
     if isinstance(src, tuple):
-        return np.asarray(c[src[0]][idx], float)[:, src[1]]
+        image = np.asarray(c[src[0]][idx], float)
+        if isinstance(src[1], str):
+            return quadrant(image, src[1], resistivity=src[0].startswith("ZR"))
+        return image[:, src[1]]
     return azimuthal_average(c[src][idx])
 
 
@@ -93,8 +97,8 @@ def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources
     """Interval data for a loaded WellRun.
 
     ``sources`` maps each forward-model label to its delivered data: a curve name (``ARH16P``, ``ARH16PC``,
-    ``ZRH16PT``; a 32-bin image such as ``ZRH16P`` is reduced by ``azimuthal_average``) or ``(image, bin)`` for one
-    bin (``("ZGM112P", 0)`` is the top geosignal). Labels without a usable source are kept as NaN-free zeros and must
+    ``ZRH16PT``; a 32-bin image such as ``ZRH16P`` is reduced by ``azimuthal_average``), ``(image, bin)`` for one
+    bin, or ``(image, side)`` for a 90-degree quadrant sector (``("ZRH16P", "T")``; see ``backend.data.quadrants``). Labels without a usable source are kept as NaN-free zeros and must
     get weight 0. Stations are dropped only where a ``required`` label (default: all sourced labels) or the
     trajectory is missing.
     """
@@ -152,6 +156,11 @@ class FitConfig:
     sigma: float = 0.02                # decades, data standard deviation
     curve_sigma: dict | None = None    # label -> sigma in inversion units (overrides ``sigma``)
     azimuthal: bool = False            # forward model with directional ZR top/bottom and ZG channels
+    fit_cross_dip: bool = False        # second dip angle across the well, so the dip azimuth is free (3D facets)
+    dip_limit_deg: float = 15.0        # bound on the along- and cross-well dip angles
+    rh_min: float = 0.1                # ohm-m bounds on every layer's Rh
+    rh_max: float = 1000.0
+    forward_options: dict | None = None  # extra ADRForward arguments, e.g. zr_sides for left/right quadrants
     curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
     level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
     max_nfev: int = 25
@@ -170,7 +179,7 @@ class Layout:
     @property
     def n_earth(self):
         k = self.cfg.n_layers
-        return (k - 1) + k + self.n_aniso + int(self.cfg.fit_dip)
+        return (k - 1) + k + self.n_aniso + int(self.cfg.fit_dip) + int(self.cfg.fit_cross_dip)
 
     @property
     def n_params(self):
@@ -183,9 +192,15 @@ class Layout:
         lrh = x[i:i + k]; i += k
         la = x[i:i + self.n_aniso]; i += self.n_aniso
         dip = x[i] if self.cfg.fit_dip else 0.0
+        i += int(self.cfg.fit_dip)
         rh = 10 ** lrh
         rv = rh * 10 ** (np.repeat(la, k) if self.n_aniso == 1 else la)
-        return LayerModel(bounds, rh, rv, dip, self.dip_azimuth)
+        if not self.cfg.fit_cross_dip:
+            return LayerModel(bounds, rh, rv, dip, self.dip_azimuth)
+        # Signed dips along and across the well (positive across = beds deepen to the right of the heading).
+        ta, tc = np.tan(np.deg2rad(dip)), np.tan(np.deg2rad(x[i]))
+        return LayerModel(bounds, rh, rv, float(np.rad2deg(np.arctan(np.hypot(ta, tc)))),
+                          float(self.dip_azimuth + np.rad2deg(np.arctan2(tc, ta))))
 
     def bias(self, x):
         if self.cfg.fit_bias:
@@ -196,12 +211,16 @@ class Layout:
 
     def bounds(self, tvd_lo, tvd_hi):
         k = self.cfg.n_layers
-        lo = [tvd_lo] + [0.5] * (k - 2) + [-1.0] * k + [0.0] * self.n_aniso
-        hi = [tvd_hi] + [60.0] * (k - 2) + [3.0] * k + [1.0] * self.n_aniso
+        lrh_lo, lrh_hi = np.log10(self.cfg.rh_min), np.log10(self.cfg.rh_max)
+        lo = [tvd_lo] + [0.5] * (k - 2) + [lrh_lo] * k + [0.0] * self.n_aniso
+        hi = [tvd_hi] + [60.0] * (k - 2) + [lrh_hi] * k + [1.0] * self.n_aniso
         if k == 1:
             lo, hi = lo[1:], hi[1:]
+        lim = self.cfg.dip_limit_deg
         if self.cfg.fit_dip:
-            lo.append(-15.0); hi.append(15.0)
+            lo.append(-lim); hi.append(lim)
+        if self.cfg.fit_cross_dip:
+            lo.append(-lim); hi.append(lim)
         if self.cfg.fit_bias:
             lo += [-0.5] * self.n_curves; hi += [0.5] * self.n_curves
         return np.array(lo), np.array(hi)
@@ -209,7 +228,7 @@ class Layout:
     def steps(self):
         k = self.cfg.n_layers
         s = [0.05] * (k - 1) + [0.004] * k + [0.004] * self.n_aniso + ([0.05] if self.cfg.fit_dip else [])
-        return np.array(s)
+        return np.array(s + ([0.05] if self.cfg.fit_cross_dip else []))
 
 
 # ---------------------------------------------------------------------------- parallel forward
@@ -217,15 +236,22 @@ _FWD: ADRForward | None = None
 _TRAJ: Trajectory | None = None
 
 
-def _init_worker(receiver_sep_in, traj, azimuthal=False):
+def _init_worker(receiver_sep_in, traj, azimuthal=False, options=None):
     global _FWD, _TRAJ
-    _FWD = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=azimuthal)
+    _FWD = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=azimuthal, **(options or {}))
     _FWD.tables()
     _TRAJ = traj
 
 
-def _predict(model: LayerModel):
-    return _FWD.predict(model, _TRAJ)
+def _predict(task):
+    model, idx = task if isinstance(task, tuple) else (task, None)
+    return _FWD.predict(model, _TRAJ if idx is None else _TRAJ.subset(idx))
+
+
+def worker_pool(traj: Trajectory, workers: int, receiver_sep_in=8.0, azimuthal=False, options=None):
+    """A pool on the full trajectory, shared by Inverters of sub-windows (``Inverter(pool=..., station_idx=...)``)."""
+    return ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
+                               initargs=(receiver_sep_in, traj, azimuthal, options))
 
 
 @dataclass
@@ -261,7 +287,8 @@ class FitResult:
 class Inverter:
     """Parallel finite-difference Levenberg-Marquardt (trust-region) fit for one window."""
 
-    def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None):
+    def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None,
+                 pool=None, station_idx=None):
         self.data, self.cfg = data, cfg
         self.on_eval = on_eval
         az = float(np.rad2deg(np.arctan2(data.traj.axis[:, 1].mean(), data.traj.axis[:, 0].mean())))
@@ -270,13 +297,15 @@ class Inverter:
         w = cfg.curve_weights or {}
         sig = cfg.curve_sigma or {}
         self.w = np.array([float(w.get(lab, 1.0)) / float(sig.get(lab, cfg.sigma)) for lab in data.labels])
-        self.pool = ProcessPoolExecutor(max_workers=workers or min(16, self.lay.n_earth + 1),
-                                        initializer=_init_worker,
-                                        initargs=(receiver_sep_in, data.traj, cfg.azimuthal))
+        self._owns_pool = pool is None
+        self.station_idx = None if station_idx is None else np.asarray(station_idx)
+        self.pool = pool or worker_pool(data.traj, workers or min(16, self.lay.n_earth + 1), receiver_sep_in,
+                                        cfg.azimuthal, cfg.forward_options)
         self._cache = {}
 
     def close(self):
-        self.pool.shutdown()
+        if self._owns_pool:
+            self.pool.shutdown()
 
     def __enter__(self):
         return self
@@ -289,7 +318,9 @@ class Inverter:
         todo = [(k, x) for k, x in zip(keys, xs) if k not in self._cache]
         uniq = dict(todo)
         if uniq:
-            for k, p in zip(uniq, self.pool.map(_predict, [self.lay.model(x) for x in uniq.values()])):
+            tasks = [self.lay.model(x) if self.station_idx is None else (self.lay.model(x), self.station_idx)
+                     for x in uniq.values()]
+            for k, p in zip(uniq, self.pool.map(_predict, tasks)):
                 self._cache[k] = p
         if len(self._cache) > 64:
             for k in list(self._cache)[:-32]:
@@ -387,12 +418,14 @@ class Inverter:
             raise ValueError("no start model could be evaluated: " + " | ".join(dict.fromkeys(errors)))
         return best
 
-    def x_from(self, boundaries_rel_ft, log_rh, log_aniso, dip=0.0, bias=None):
+    def x_from(self, boundaries_rel_ft, log_rh, log_aniso, dip=0.0, bias=None, cross_dip=0.0):
         b = list(boundaries_rel_ft)
         layer_part = ([b[0]] + list(np.diff(b))) if b else []
         x = layer_part + list(log_rh) + list(np.atleast_1d(log_aniso)[:self.lay.n_aniso])
         if self.cfg.fit_dip:
             x.append(dip)
+        if self.cfg.fit_cross_dip:
+            x.append(cross_dip)
         if self.cfg.fit_bias:
             x += list(np.zeros(self.lay.n_curves) if bias is None else bias)
         return np.array(x, float)

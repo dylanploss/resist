@@ -21,6 +21,7 @@ from backend.services import runs
 
 from backend.qc.api import router as qc_router
 from backend.inversion.api import router as inversion_router
+from backend.inversion.facets_api import router as facets_router
 from backend.inversion import store as inversion_store
 
 app = FastAPI(title="Resist backend")
@@ -32,6 +33,7 @@ app.add_middleware(
 )
 app.include_router(qc_router)
 app.include_router(inversion_router)
+app.include_router(facets_router)
 
 
 @app.on_event("startup")

@@ -101,8 +101,8 @@ Details:
 - Inversion request: `{"run", "curves": [QC-selected names], "md_min_ft", "md_max_ft", "step_ft": 4, "layers": 3, "calibration": true, "quick": false}`. The interval is at most 1500 ft and 250 stations.
 - The inversion plan maps the QC selection onto the 1.5D forward model (`backend/inversion/service.py`). Each `used` entry has `curve`, `label`, `kind` (`avg`, `top`, `bottom`, `geosignal`), `source`, `measurement`, `weight` and `correction`.
   - `AR` curves are used as averages; a `C` curve uses the vendor-corrected data.
-  - A `ZR` image at 16/32/48 in contributes its top and bottom bins (`ZR..T`/`ZR..B` curves, or image bins 0/16). `ZR..T`/`ZR..B` curves can also be selected directly.
-  - A `ZG` image contributes its top bin (bin 0).
+  - A `ZR` image at 16/32/48 in contributes its top and bottom quadrants, extracted from the image as 90° sectors (`backend/data/quadrants.py`) in every run. Selecting `ZR..T`/`ZR..B` directly uses the image sector, or the delivered curve when the run lacks the image.
+  - A `ZG` image contributes its top quadrant sector.
   - Phase has weight 1. With `calibration` on, 2 MHz attenuation (averaged and top/bottom) has weight 0.5 and the Z-20 resistivity-dependent correction, and 500/125 kHz attenuation has weight 0.25.
   - Left/right bins, `ZR` 50/66/82 in images and conventional curves are listed under `ignored` with a reason.
   - `azimuthal` is true when directional channels are used.

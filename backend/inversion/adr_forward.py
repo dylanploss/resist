@@ -23,9 +23,26 @@ from dataclasses import dataclass, field
 import empymod
 import numpy as np
 
+from backend.data.quadrants import BINS, CENTRE, SECTOR
+
 FT = 0.3048
 INCH = 0.0254
 HTARG = {"dlf": "key_201_2012"}
+
+
+def _bipole(src, rec, **kw):
+    """``empymod.bipole`` for magnetic dipoles as ``(n_freq, n_rec, n_src)``.
+
+    empymod 2.5 returns NaN when the source lies in a deeper layer than the receiver, which happens whenever the tool
+    straddles a bed. Those pairs are recomputed with source and receiver swapped (magnetic-dipole reciprocity).
+    """
+    nf, nr, ns = len(np.atleast_1d(kw["freqtime"])), len(rec[0]), len(src[0])
+    v = np.asarray(empymod.bipole(src, rec, msrc=True, mrec=True, **kw)).reshape(nf, nr, ns)
+    bad = np.isnan(v)
+    if bad.any():
+        w = np.asarray(empymod.bipole(rec, src, msrc=True, mrec=True, **kw)).reshape(nf, ns, nr).transpose(0, 2, 1)
+        v = np.where(bad, w, v)
+    return v
 
 
 @dataclass(frozen=True)
@@ -99,16 +116,20 @@ class ADRForward:
     """Averaged (``AR``) and, with ``azimuthal=True``, directional channels:
 
     * ``ZR<f><s>{P,A}{T,B}``: compensated top/bottom-bin apparent resistivities of the tilted receiver pair.
-    * ``ZR{M,L}{50,66,82}{P,A}{T,B}``: long-spacing top/bottom bins on a GUESSED geometry (see ``LS_RECEIVER_IN``):
+    * ``ZR{M,L}{50,66,82}{P,A}{T,B}``: long-spacing quadrants on a GUESSED geometry (see ``LS_RECEIVER_IN``):
       uncompensated, so tool/borehole effects are not cancelled; use with reduced weight.
     * ``ZG<f>112{P,A}T``: top-bin geosignal for one transmitter 112 in uphole of a tilted receiver at the tool
       midpoint: phase(top) - phase(bottom) in deg and 20 log10|V_bottom / V_top| in dB. These signs match the
       delivered data: on Z-19 and Z-20 both rise when the bottom bin reads more resistive (r = +0.52 to +0.66).
 
     Directional assumptions (not vendor-confirmed): receivers tilted ``tilt_deg`` from the axis; the
-    compensated top bin pairs the uphole transmitter at tool-face 0 with the downhole transmitter at tool-face
-    180 deg (mirror-symmetric pairing, which keeps the up/down sensitivity); bins are labelled by look direction,
+    compensated bin at look direction psi pairs the uphole transmitter at psi with the downhole transmitter at
+    psi + 180 deg (mirror-symmetric pairing, which keeps the up/down sensitivity); bins are labelled by look direction,
     so the receiver tilt sense (``polarity``) is fixed such that the bottom bin reads a resistive bed below.
+
+    Quadrants match ``backend.data.quadrants``: ``quadrant="sector"`` averages the eight bins of a 90-degree sector
+    (conductivity mean for ZR, plain mean for ZG); ``quadrant="bin"`` uses the centre bin only. Bin 8 (``R``) looks
+    toward ``rotation * (axis x high-side)``; the sense (``rotation``) is not vendor-confirmed.
     """
 
     channels: tuple = DEFAULT_CHANNELS
@@ -119,6 +140,10 @@ class ADRForward:
     ls_receiver_in: float = LS_RECEIVER_IN
     tilt_deg: float = 45.0
     polarity: int | None = None
+    quadrant: str = "sector"
+    zr_sides: tuple = ("T", "B")
+    zg_sides: tuple = ("T",)
+    rotation: int = 1
     rho_grid: np.ndarray = field(default_factory=lambda: np.logspace(-1, 3.3, 260))
 
     def __post_init__(self):
@@ -140,12 +165,12 @@ class ADRForward:
         if self.azimuthal:
             for m in "PA":
                 for c in self.channels:
-                    labels += [f"ZR{c.name[2:]}{m}T", f"ZR{c.name[2:]}{m}B"]
+                    labels += [f"ZR{c.name[2:]}{m}{side}" for side in self.zr_sides]
             for m in "PA":
                 for c in self.long_spacings:
-                    labels += [f"{c.name}{m}T", f"{c.name}{m}B"]
+                    labels += [f"{c.name}{m}{side}" for side in self.zr_sides]
             for g in self.geosignals:
-                labels += [g.name + "PT", g.name + "AT"]
+                labels += [g.name + m + side for side in self.zg_sides for m in "PA"]
         return labels
 
     def units(self):
@@ -163,10 +188,9 @@ class ADRForward:
             n = len(off)
             return [off * sin_rel, np.zeros(n), zc + off * cos_rel, np.zeros(n), np.full(n, dip)]
 
-        h = empymod.bipole(pts(self.tx_offsets), pts(self.rx_offsets), depth=list(depth), res=list(res),
-                           freqtime=self.freqs, aniso=list(aniso), msrc=True, mrec=True, verb=0,
-                           htarg=HTARG)
-        h = np.conj(np.asarray(h).reshape(len(self.freqs), 2, len(self.tx_offsets)))  # e^{-iwt}
+        h = _bipole(pts(self.tx_offsets), pts(self.rx_offsets), depth=list(depth), res=list(res),
+                    freqtime=self.freqs, aniso=list(aniso), verb=0, htarg=HTARG)
+        h = np.conj(h)  # e^{-iwt}
         ns = len(self.spacings)
         out_p, out_a = [], []
         for c in self.channels:
@@ -183,19 +207,21 @@ class ADRForward:
         return np.rad2deg(np.arctan2(v[..., 1], v[..., 0])), np.rad2deg(np.arcsin(np.clip(v[..., 2], -1, 1)))
 
     def _raw_azimuthal(self, depth, res, aniso, zc, t_f, h_f, polarity):
-        """Phase/attenuation for averaged, top and bottom bins (n_chan each) plus top geosignals at one station.
+        """Phase/attenuation of the averaged receiver ``(n_chan,)``, of all 32 compensated bins ``(32, n_chan)`` and of
+        all 32 uncompensated long-spacing bins ``(32, n_long)``, plus geosignals ``(32, n_geo, 2)`` at one station.
 
         ``t_f`` and ``h_f`` are the tool axis and high-side directions in the formation frame (x along the bedding,
-        z = bed normal, down)."""
+        z = bed normal, down). The receivers are evaluated along the tool axis, high side and right side; any bin
+        direction is a linear combination of those, so all 32 bins cost one empymod call."""
         c, s = np.cos(np.deg2rad(self.tilt_deg)), np.sin(np.deg2rad(self.tilt_deg))
-        look = {"T": polarity * h_f, "B": -polarity * h_f}
+        r_f = self.rotation * np.cross(t_f, h_f)
+        axes = (t_f, h_f, r_f)
         rx_off = list(self.rx_offsets)
         gs_rx = ls_rx = None
         if self.geosignals:
             gs_rx = len(rx_off); rx_off.append(0.0)
         if self.long_spacings:
             ls_rx = len(rx_off); rx_off.append(self.ls_receiver_in * INCH)
-        rx = [(o, k) for o in rx_off for k in "TB"]
         ns = len(self.spacings)
         extra, ls_tx = [], []
         base = 2 * ns + len(self.geosignals)
@@ -214,49 +240,57 @@ class ADRForward:
             az, dip = self._angles(np.asarray(dirs))
             return [pos[:, 0], pos[:, 1], pos[:, 2], az, dip]
 
-        rdirs = [c * t_f + s * look[k] for _, k in rx]
-        v = empymod.bipole(points(tx_off, [t_f] * len(tx_off)), points([o for o, _ in rx], rdirs),
-                           depth=list(depth), res=list(res), freqtime=self.freqs, aniso=list(aniso),
-                           msrc=True, mrec=True, verb=0, htarg=HTARG)
-        v = np.conj(np.asarray(v).reshape(len(self.freqs), len(rx), len(tx_off)))
-        R = {(i, k): 2 * i + (0 if k == "T" else 1) for i in range(len(rx_off)) for k in "TB"}
-        out = {k: ([], []) for k in ("avg", "T", "B", "LT", "LB")}
+        rx = [(o, d) for o in rx_off for d in axes]
+        v = _bipole(points(tx_off, [t_f] * len(tx_off)), points([o for o, _ in rx], [d for _, d in rx]),
+                    depth=list(depth), res=list(res), freqtime=self.freqs, aniso=list(aniso), verb=0, htarg=HTARG)
+        v = np.conj(v.reshape(len(self.freqs), len(rx_off), 3, len(tx_off)))
+        # Bin k spans [k, k+1) x 11.25 deg, so a sector is centred on its quadrant; "bin" mode looks exactly at 0/180 deg.
+        psi = 2 * np.pi * (np.arange(BINS) + (0.0 if self.quadrant == "bin" else 0.5)) / BINS
+        # (32, 3) weights on the (axis, high, right) receiver components for every bin's look direction
+        wts = np.column_stack([np.full(BINS, c), s * polarity * np.cos(psi), s * polarity * np.sin(psi)])
+        vb = np.einsum("bk,frkt->frbt", wts, v)        # (freq, rx, bin, tx)
+        opp = (np.arange(BINS) + BINS // 2) % BINS
 
         def comp(up, dn):
             return (-0.5 * (np.angle(up, deg=True) + np.angle(dn, deg=True)),
                     10 * (np.log10(abs(up)) + np.log10(abs(dn))))
 
+        avg_p, avg_a, bin_p, bin_a = [], [], [], []
         for ch in self.channels:
             fi = int(np.searchsorted(self.freqs, ch.frequency_hz))
             si = int(np.searchsorted(self.spacings, ch.spacing_in))
             up_t, dn_t = si, ns + si
-            V = lambda r, k, t: v[fi, R[(r, k)], t]
-            avg = lambda r, t: 0.5 * (V(r, "T", t) + V(r, "B", t))
-            for key, (ku, kd) in {"T": ("T", "B"), "B": ("B", "T")}.items():
-                p, a = comp(V(0, ku, up_t) / V(1, ku, up_t), V(1, kd, dn_t) / V(0, kd, dn_t))
-                out[key][0].append(p); out[key][1].append(a)
-            p, a = comp(avg(0, up_t) / avg(1, up_t), avg(1, dn_t) / avg(0, dn_t))
-            out["avg"][0].append(p); out["avg"][1].append(a)
+            # Mirror pairing: uphole transmitter at the bin's look direction, downhole transmitter at the opposite one.
+            p, a = comp(vb[fi, 0, :, up_t] / vb[fi, 1, :, up_t], vb[fi, 1, opp, dn_t] / vb[fi, 0, opp, dn_t])
+            bin_p.append(p); bin_a.append(a)
+            va = c * v[fi, :, 0, :]                      # azimuthal mean of the tilted receiver
+            p, a = comp(va[0, up_t] / va[1, up_t], va[1, dn_t] / va[0, dn_t])
+            avg_p.append(p); avg_a.append(a)
+        ls_p, ls_a = [], []
         for ch, tj in zip(self.long_spacings, ls_tx):
             fi = int(np.searchsorted(self.freqs, ch.frequency_hz))
-            for key, k in (("LT", "T"), ("LB", "B")):
-                ratio = v[fi, R[(1, k)], tj] / v[fi, R[(ls_rx, k)], tj]           # near main Rx / LS Rx
-                out[key][0].append(-np.angle(ratio, deg=True)); out[key][1].append(20 * np.log10(abs(ratio)))
-        gs = []
+            ratio = vb[fi, 1, :, tj] / vb[fi, ls_rx, :, tj]            # near main Rx / LS Rx, same look direction
+            ls_p.append(-np.angle(ratio, deg=True)); ls_a.append(20 * np.log10(abs(ratio)))
+        gs = np.empty((BINS, len(self.geosignals), 2))
         for j, g in enumerate(self.geosignals):
             fi = int(np.searchsorted(self.freqs, g.frequency_hz))
-            tj = 2 * ns + j
-            vt, vb = v[fi, R[(gs_rx, "T")], tj], v[fi, R[(gs_rx, "B")], tj]
-            gs += [np.angle(vt / vb, deg=True), 20 * np.log10(abs(vb / vt))]
-        return {k: (np.array(p), np.array(a)) for k, (p, a) in out.items()}, np.array(gs)
+            vg = vb[fi, gs_rx, :, 2 * ns + j]
+            gs[:, j, 0] = np.angle(vg / vg[opp], deg=True)
+            gs[:, j, 1] = 20 * np.log10(abs(vg[opp] / vg))
+        empty = np.empty((BINS, 0))
+        ls = (np.array(ls_p).T, np.array(ls_a).T) if ls_p else (empty, empty)
+        return (np.array(avg_p), np.array(avg_a)), (np.array(bin_p).T, np.array(bin_a).T), ls, gs
 
     def _polarity(self):
         """Tilt sense such that the bottom bin of a horizontal tool reads higher above a resistive bed."""
         if self.polarity is None:
             t_f, h_f = np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, -1.0])
-            out, _ = self._raw_azimuthal([0.3], [5.0, 50.0], [1.0, 1.0], 0.0, t_f, h_f, 1)
-            self.polarity = 1 if out["B"][0][0] < out["T"][0][0] else -1   # lower phase lag = more resistive
+            _, (bp, _), _, _ = self._raw_azimuthal([0.3], [5.0, 50.0], [1.0, 1.0], 0.0, t_f, h_f, 1)
+            self.polarity = 1 if bp[CENTRE["B"], 0] < bp[CENTRE["T"], 0] else -1   # lower phase lag = more resistive
         return self.polarity
+
+    def _side_bins(self, side):
+        return [CENTRE[side]] if self.quadrant == "bin" else [(CENTRE[side] + j) % BINS for j in SECTOR]
 
     # ------------------------------------------------------------------ transforms
     def tables(self):
@@ -286,8 +320,8 @@ class ADRForward:
             t_f, h_f = np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
             ph, at = [], []
             for r in self.rho_grid:
-                out, _ = self._raw_azimuthal([], [r], [1.0], 0.0, t_f, h_f, 1)
-                ph.append(out["LT"][0]); at.append(out["LT"][1])
+                _, _, (lp, la), _ = self._raw_azimuthal([], [r], [1.0], 0.0, t_f, h_f, 1)
+                ph.append(lp[0]); at.append(la[0])               # homogeneous: every bin reads the same
             self._ls_tables = (np.array(ph), np.array(at))
         return self._ls_tables
 
@@ -324,31 +358,32 @@ class ADRForward:
                                  model.boundaries_m]) @ n
         aniso = np.sqrt(model.rv / model.rh)
         nc, nl = len(self.channels), len(self.long_spacings)
-        size = {"avg": nc, "T": nc, "B": nc, "LT": nl, "LB": nl}
-        ph = {k: np.empty((len(traj), m)) for k, m in size.items()}
-        at = {k: np.empty((len(traj), m)) for k, m in size.items()}
-        gs = np.empty((len(traj), 2 * len(self.geosignals)))
-        for i in range(len(traj)):
-            t, h = traj.axis[i], traj.high[i]
+        n_st = len(traj)
+        avg_p, avg_a = np.empty((n_st, nc)), np.empty((n_st, nc))
+        bin_p, bin_a = np.empty((n_st, BINS, nc)), np.empty((n_st, BINS, nc))
+        ls_p, ls_a = np.empty((n_st, BINS, nl)), np.empty((n_st, BINS, nl))
+        gs = np.empty((n_st, BINS, len(self.geosignals), 2))
+        for i in range(n_st):
+            t, h = traj.axis[i] / np.linalg.norm(traj.axis[i]), traj.high[i] / np.linalg.norm(traj.high[i])
             x = t - (t @ n) * n
             if np.linalg.norm(x) < 1e-9:
                 x = h - (h @ n) * n
             x /= np.linalg.norm(x)
             y = np.cross(n, x)
             basis = np.vstack([x, y, n])
-            out, gs[i] = self._raw_azimuthal(depth, model.rh, aniso, traj.ned[i] @ n, basis @ t, basis @ h, pol)
-            for k in ph:
-                ph[k][i], at[k][i] = out[k]
-        res = {k: self.apparent(ph[k], at[k]) for k in ("avg", "T", "B")}
+            (avg_p[i], avg_a[i]), (bin_p[i], bin_a[i]), (ls_p[i], ls_a[i]), gs[i] = self._raw_azimuthal(
+                depth, model.rh, aniso, traj.ned[i] @ n, basis @ t, basis @ h, pol)
+        rp, ra = self.apparent(avg_p, avg_a)
+        cols = [np.log10(rp), np.log10(ra)]
+        groups = [(self.apparent(bin_p, bin_a), nc)]                   # each (n, 32, n_chan) ohm-m
         if nl:
-            res.update({k: self.apparent(ph[k], at[k], self.ls_tables()) for k in ("LT", "LB")})
-        cols = [np.log10(res["avg"][0]), np.log10(res["avg"][1])]
-        for top, bottom, m_count in (("T", "B", nc), ("LT", "LB", nl)):
-            if not m_count:
-                continue
+            groups.append((self.apparent(ls_p, ls_a, self.ls_tables()), nl))
+        for bins, count in groups:
             for m in (0, 1):
-                zr = np.empty((len(traj), 2 * m_count))
-                zr[:, 0::2], zr[:, 1::2] = res[top][m], res[bottom][m]
-                cols.append(np.log10(zr))
-        cols.append(gs)
+                # Conductivity mean over the sector, as for delivered images; one bin when quadrant == "bin"
+                sides = [1.0 / np.mean(1.0 / bins[m][:, self._side_bins(sd)], axis=1) for sd in self.zr_sides]
+                cols.append(np.log10(np.stack(sides, axis=2).reshape(n_st, count * len(self.zr_sides))))
+        for j in range(len(self.geosignals)):
+            for sd in self.zg_sides:
+                cols.append(gs[:, self._side_bins(sd), j, :].mean(axis=1))
         return np.column_stack(cols)

@@ -3,18 +3,21 @@
 The QC page picks curves; this module maps them onto the 1.5D forward model (``backend.inversion.adr_forward``):
 
 * ``AR`` averaged resistivities are used as is; a ``C`` variant (``ARH16PC``) uses the vendor-corrected curve.
-* A ``ZR`` image at 16/32/48 in contributes its **top and bottom** bins (delivered ``ZR..T``/``ZR..B`` curves, or image
-  bins 0 and 16 when a run lacks them); ``ZR..T``/``ZR..B`` curves can also be selected directly. These carry the
+* A ``ZR`` image at 16/32/48 in contributes its **top and bottom** quadrants, extracted from the image as 90-degree
+  sectors (``backend.data.quadrants``) for every run, so data and forward model use the same definition. Selecting
+  ``ZR..T``/``ZR..B`` directly uses the image sector when the image exists, else the delivered curve. These carry the
   up/down information that places boundaries above or below the well.
-* A ``ZG`` geosignal image contributes its **top** bin (bin 0; phase in deg, attenuation in dB).
-* ``ZR`` 50/66/82 in long-spacing images contribute top/bottom bins on a **guessed** antenna geometry
+* A ``ZG`` geosignal image contributes its **top** quadrant sector (phase in deg, attenuation in dB).
+* ``ZR`` 50/66/82 in long-spacing images contribute top/bottom sectors on a **guessed** antenna geometry
   (``adr_forward.LS_RECEIVER_IN``), at half weight and with a plan warning.
 * Phase weight 1. With ``calibration`` on, attenuation is down-weighted and 2 MHz attenuation (averaged and
   top/bottom) gets the Z-20 resistivity-dependent correction (docs/inversion/HACKATHON_PLAN.md).
 * Single bins and geosignals are weighted by their own noise, estimated from the data in the interval.
 * ``ZR`` left/right bins and conventional logs are listed as ignored with a reason.
 
-Jobs run one at a time in a background thread because each uses a process pool.
+Jobs run one at a time in a background thread because each uses a process pool. The interval is cut into slices
+(default 4 ft); each slice is a separate 1.5D fit on a sliding data window centred on it (default 20 ft), warm-started
+from its neighbour, so neighbouring windows overlap and the curtain can show their mean.
 
 Finished inversions are kept in the inversion store (``backend.inversion.store``: the shared Cosmos DB graph, or
 memory + the committed snapshot). A job id is the first 12 characters of the request **fingerprint**, so a repeated
@@ -30,19 +33,19 @@ import threading
 import time
 import hashlib
 import json
+from types import SimpleNamespace
 
 import numpy as np
 
 from backend.inversion.adr_forward import FT, FREQ_LETTER, LS_RECEIVER_IN, ADRForward
 from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
-                                      default_starts, interval_from_run, noise_estimate)
+                                      default_starts, interval_from_run, noise_estimate, worker_pool)
 
 log = logging.getLogger("resist.inversion")
 AR_CURVE = re.compile(r"^AR([HML])(\d+)([PA])(C?)$")
 ZR_CURVE = re.compile(r"^ZR([HML])(\d+)([PA])([TBLR]?)$")
 ZG_CURVE = re.compile(r"^ZG([HML])(\d+)([PA])$")
 FREQ_HZ = {letter: f for f, letter in FREQ_LETTER.items()}
-TOP_BIN, BOTTOM_BIN = 0, 16           # bin 1 = up, bin 17 = down (dossier); matches the delivered ZR T/B curves
 CALIBRATED_ATTENUATION_WEIGHT = {2e6: 0.5, 5e5: 0.25, 1.25e5: 0.25}
 GEOSIGNAL_WEIGHT = {"ZGL112AT": 0.25}  # 125 kHz attenuation geosignal barely tracks ZR top/bottom (r < 0.16)
 GUESSED_GEOMETRY_WEIGHT = 0.5           # ZR 50/66/82 in: antenna layout guessed, uncompensated
@@ -51,9 +54,16 @@ SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
 WORKERS = 6
 MAX_STATIONS = 250
 MAX_INTERVAL_FT = 1500.0
+# Each slice of the curtain is its own 1.5D fit on a sliding data window centred on it.
+DEFAULT_SLICE_FT = 4.0
+DEFAULT_WINDOW_FT = 20.0
+MAX_SLICES = 300
+MIN_WINDOW_STATIONS = 3
 # Bump when the inversion code changes its results: repeated requests then recompute and supersede the old ones.
-INVERSION_VERSION = "1"
-FINGERPRINT_FIELDS = ("md_min_ft", "md_max_ft", "step_ft", "layers", "calibration", "quick")
+# "2": quadrant sectors, per-slice sliding-window fits with warm starts, Rh fit bounds.
+INVERSION_VERSION = "2"
+# Request fields that never change the result; every other field of the validated request is fingerprinted.
+NON_RESULT_FIELDS = frozenset({"force"})
 
 # The 2 MHz attenuation bias is a property of the channel, so it applies to its top/bottom bins too.
 ATTENUATION_CORRECTION = {**Z20_ATTENUATION_CORRECTION,
@@ -79,15 +89,12 @@ def _targets(run, name):
     if ar:
         return [(f"AR{ar[1]}{ar[2]}{ar[3]}", name, "avg")]
     if zr and zr[4] in ("T", "B"):
-        return [(name, name, "top" if zr[4] == "T" else "bottom")]
+        image = name[:-1]
+        return [(name, (image, zr[4]) if image in run.curves else name, "top" if zr[4] == "T" else "bottom")]
     if zr and not zr[4]:
-        out = []
-        for side, b, kind in (("T", TOP_BIN, "top"), ("B", BOTTOM_BIN, "bottom")):
-            label = f"{name}{side}"
-            out.append((label, label if label in run.curves else (name, b), kind))
-        return out
+        return [(f"{name}{side}", (name, side), kind) for side, kind in (("T", "top"), ("B", "bottom"))]
     if zg:
-        return [(f"{name}T", (name, TOP_BIN), "geosignal")]
+        return [(f"{name}T", (name, "T"), "geosignal")]
     return []
 
 
@@ -123,7 +130,7 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
                 weight *= GUESSED_GEOMETRY_WEIGHT
             entry = {"curve": name, "label": label, "kind": kind, "measurement": measurement,
                      "frequency_hz": freq, "spacing_in": spacing, "guessed_geometry": guessed,
-                     "source": source if isinstance(source, str) else f"{source[0]} bin {source[1]}",
+                     "source": source if isinstance(source, str) else f"{source[0]} {source[1]} sector",
                      "vendor_corrected": kind == "avg" and name.endswith("C"), "weight": weight, "correction": None}
             if calibration and label in ATTENUATION_CORRECTION:
                 a, g = ATTENUATION_CORRECTION[label]
@@ -203,10 +210,18 @@ def _canonical(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def canonical_request(run_id: str, request: dict) -> dict:
+    """The request validated by the API model with its defaults filled in, minus fields that do not change the result,
+    so every result-affecting field (including ones added later) is part of the fingerprint."""
+    from backend.inversion.api import InversionRequest   # api imports this module
+    body = InversionRequest(**{**request, "run": run_id}).model_dump(exclude=set(NON_RESULT_FIELDS))
+    body["curves"] = sorted(body["curves"])
+    return body
+
+
 def fingerprint(run_id: str, request: dict, plan: dict, version: str | None = None) -> tuple[str, str]:
     """(fingerprint, request_key): sha256 of the canonical request + used labels/weights, with/without the version."""
-    body = {"run": run_id, "curves": sorted(request["curves"]),
-            **{k: float(request[k]) if k.endswith("_ft") else request[k] for k in FINGERPRINT_FIELDS},
+    body = {**canonical_request(run_id, request),
             "plan": sorted([e["label"], float(e["weight"])] for e in plan["used"])}
     request_key = hashlib.sha256(_canonical(body).encode()).hexdigest()
     fp = hashlib.sha256(_canonical({**body, "version": version or INVERSION_VERSION}).encode()).hexdigest()
@@ -341,46 +356,116 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
     lc = LevelCorrection.from_table(labels, {lab: ATTENUATION_CORRECTION[lab] for lab in used
                                              if lab in ATTENUATION_CORRECTION}) if plan["calibration"] else None
     k = request["layers"]
-    fine_nfev = 10 if request["quick"] else 20
-    coarse = len(data.md_ft) > 60
-    budget = (3 * 8 if coarse else 3 * fine_nfev) + (fine_nfev if coarse else 0)
-    count = [0]
+    slice_ft, window_ft = request.get("slice_ft", DEFAULT_SLICE_FT), request.get("window_ft", DEFAULT_WINDOW_FT)
+    centres = slice_centres(float(data.md_ft[0]), float(data.md_ft[-1]), slice_ft)
+    if len(centres) > MAX_SLICES:
+        raise ValueError(f"{len(centres)} slices exceed {MAX_SLICES}; shorten the interval or widen the slices")
+    nfev = 6 if request["quick"] else 12
+    budget = len(centres) * nfev + 2 * nfev
+    count, current = [0], [0]
     well_path = {"md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
                  "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1))))}
-    best = {"stage": None, "chi": np.inf}
 
     def tick(inv, x, r):
         count[0] += 1
-        if job is None:
-            return
-        job.progress = min(0.99, count[0] / budget)
-        stage = "coarse" if inv.data is not data else "fine"
-        job.message = f"{stage} stage, forward evaluation {count[0]} (~{budget} expected)"
-        n_used = int(np.count_nonzero(inv.w > 0)) * len(inv.data.md_ft)
-        chi = float(np.sqrt(np.sum(r ** 2) / max(1, n_used)))
-        if stage != best["stage"] or chi < best["chi"]:
-            best.update(stage=stage, chi=chi)
-            # Geometry on the full window even in the coarse stage: the model is in global coordinates.
-            job.partial = {**well_path, "stage": stage, "evaluation": count[0], "misfit_normalised": round(chi, 2),
-                           "model": model_geometry(data, inv.lay.model(x))}
+        if job is not None:
+            job.progress = min(0.99, count[0] / budget)
+            job.message = f"slice {current[0] + 1}/{len(centres)} · forward evaluation {count[0]}"
 
     t0 = time.time()
-    common = dict(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal)
-    x0 = None
-    if coarse:
-        sub = data.subset(np.arange(len(data.md_ft)) % 2 == 0)
-        with Inverter(sub, FitConfig(**common, max_nfev=8), workers=WORKERS, on_eval=tick) as inv:
-            x0 = inv.multistart(default_starts(inv, sub, k, weights=w)).x
-    with Inverter(data, FitConfig(**common, max_nfev=fine_nfev), workers=WORKERS, on_eval=tick) as inv:
-        res = None
-        if x0 is not None:
-            try:
-                res = inv.fit(x0)
-            except ValueError:
-                res = None                     # coarse solution not usable on the full window: restart below
-        if res is None:
-            res = inv.multistart(default_starts(inv, data, k, weights=w))
-    return serialize(data, res, w, sigma, lc, time.time() - t0, used)
+    cfg = FitConfig(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal,
+                    rh_min=request.get("rh_min_ohmm", 0.1), rh_max=request.get("rh_max_ohmm", 1000.0),
+                    max_nfev=nfev)
+    pred = np.full(data.obs.shape, np.nan)
+    owner = np.argmin(np.abs(data.md_ft[:, None] - centres[None, :]), axis=1)
+    slices, models, x_prev, chi_prev, total_nfev = [], {}, None, np.inf, 0
+    with worker_pool(data.traj, WORKERS, azimuthal=azimuthal) as pool:
+        for s, c in enumerate(centres):
+            current[0] = s
+            idx = np.flatnonzero(np.abs(data.md_ft - c) <= window_ft / 2 + 1e-6)
+            if idx.size < MIN_WINDOW_STATIONS:
+                continue
+            sub = data.subset(idx)
+            with Inverter(sub, cfg, on_eval=tick, pool=pool, station_idx=idx) as inv:
+                res = None
+                if x_prev is not None:
+                    try:
+                        res = inv.fit(x_prev)
+                    except ValueError:
+                        res = None
+                chi = _chi(res, sigma, labels, w) if res is not None else np.inf
+                # Warm start from the previous slice; restart only when it clearly failed to fit this window.
+                if res is None or chi > 1.5 * chi_prev:
+                    fresh = inv.multistart(default_starts(inv, sub, k, weights=w))
+                    if res is None or fresh.cost < res.cost:
+                        res, chi = fresh, _chi(fresh, sigma, labels, w)
+            x_prev, chi_prev = res.x, chi
+            total_nfev += res.nfev
+            models[s] = res.model
+            mine = owner[idx] == s
+            pred[idx[mine]] = res.pred[mine]
+            slices.append(_slice_entry(data, res.model, idx, c, slice_ft, chi))
+            if job is not None:
+                job.partial = {**well_path, "slice_ft": slice_ft, "window_ft": window_ft, "slices": list(slices),
+                               "evaluation": count[0], "slice": s + 1, "n_slices": len(centres),
+                               "misfit_normalised": round(chi, 2)}
+    if not slices:
+        raise ValueError(f"no slice had {MIN_WINDOW_STATIONS} stations in its {window_ft:g} ft data window; "
+                         "use a smaller station step or a wider window")
+    obs = np.where(data.valid if data.valid is not None else True, data.obs, np.nan)
+    combined = SimpleNamespace(pred=pred, residual=obs - pred, nfev=total_nfev, model=None)
+    out = serialize(data, combined, w, sigma, lc, time.time() - t0, used,
+                    model=summary_model(data, models, owner))
+    return {**out, "slice_ft": slice_ft, "window_ft": window_ft, "slices": slices}
+
+
+def slice_centres(md_min: float, md_max: float, slice_ft: float) -> np.ndarray:
+    """Centres of back-to-back slices covering [md_min, md_max]."""
+    n = max(1, int(np.ceil((md_max - md_min) / slice_ft - 1e-9)))
+    return md_min + slice_ft * (np.arange(n) + 0.5)
+
+
+def _chi(res, sigma, labels, w):
+    cols = np.flatnonzero(w > 0)
+    s = np.array([sigma[labels[j]] for j in cols])
+    r = res.residual[:, cols] / s
+    return float(np.sqrt(np.nanmean(r ** 2))) if r.size else float("nan")
+
+
+def _slice_entry(data, model, idx, centre, slice_ft, chi) -> dict:
+    """One slice: its layered model and the boundary TVDs at every station of its data window."""
+    geom = model_geometry(data, model)
+    return {"md_centre_ft": round(float(centre), 2),
+            "slice_min_ft": round(float(centre - slice_ft / 2), 2), "slice_max_ft": round(float(centre + slice_ft / 2), 2),
+            "window_min_ft": round(float(data.md_ft[idx[0]]), 2), "window_max_ft": round(float(data.md_ft[idx[-1]]), 2),
+            "md_ft": _none(data.md_ft[idx]),
+            "boundary_tvd_ft": [[b[i] for i in idx] for b in geom["boundary_tvd_ft"]],
+            "layers": [{"rh": layer["rh"], "rv": layer["rv"]} for layer in geom["layers"]],
+            "dip_deg": geom["dip_deg"], "dip_azimuth_deg": geom["dip_azimuth_deg"],
+            "misfit_normalised": round(chi, 2) if np.isfinite(chi) else None}
+
+
+def summary_model(data, models: dict, owner) -> dict:
+    """Single-model view of a sliced result for the layer table and 3D well tab: median layer properties and dip,
+    boundary TVDs at each station from the slice that owns it."""
+    geoms = {s: model_geometry(data, m) for s, m in models.items()}
+    keys = sorted(geoms)
+    first = geoms[keys[0]]
+    nb = len(first["boundary_tvd_ft"])
+    nearest = [min(keys, key=lambda s: abs(s - o)) for o in owner]
+    boundary = [[geoms[s]["boundary_tvd_ft"][j][i] for i, s in enumerate(nearest)] for j in range(nb)]
+
+    def med(values):
+        v = [x for x in values if x is not None]
+        return round(float(np.median(v)), 3) if v else None
+
+    layers = [{key: med([geoms[s]["layers"][i][key] for s in keys])
+               for key in ("rh", "rv", "top_tvd_ft", "bottom_tvd_ft")} for i in range(len(first["layers"]))]
+    return {"layers": layers,
+            "dip_deg": med([g["dip_deg"] for g in geoms.values()]),
+            "dip_azimuth_deg": med([g["dip_azimuth_deg"] for g in geoms.values()]),
+            "reference_note": "median over slices; each slice is its own 1.5D model fitted on a sliding data window",
+            "boundary_tvd_ft": boundary}
 
 
 def _none(values) -> list:
@@ -416,7 +501,7 @@ def model_geometry(data, m) -> dict:
     }
 
 
-def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
+def serialize(data, res, weights, sigma, lc, elapsed, used=None, model=None) -> dict:
     m = res.model
     valid = data.valid if data.valid is not None else np.ones_like(data.obs, bool)
     units = data.units or ["log"] * len(data.labels)
@@ -424,7 +509,7 @@ def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
     curves = []
     res_pct, chi = [], []
     for j, lab in enumerate(data.labels):
-        ok = valid[:, j]
+        ok = valid[:, j] & np.isfinite(res.residual[:, j])
         if not ok.any() and weights[j] == 0:
             continue
         r = res.residual[ok, j]
@@ -453,7 +538,7 @@ def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
         "md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
         "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1)))),
         "curves": curves,
-        "model": model_geometry(data, m),
+        "model": model if model is not None else model_geometry(data, m),
         "rms_percent_used": round(float(100 * (10 ** np.sqrt(np.mean(res_pct ** 2)) - 1)), 2) if res_pct.size else None,
         "misfit_normalised": round(float(np.sqrt(np.mean(chi ** 2))), 2) if chi.size else None,
         "stations": int(len(data.md_ft)), "forward_evaluations": int(res.nfev), "elapsed_s": round(elapsed, 1),
