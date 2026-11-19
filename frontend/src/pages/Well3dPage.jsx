@@ -7,11 +7,14 @@ import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
 import ColorBar from '../components/well3d/ColorBar.jsx'
 import { CompareColorBar, CompareDoi, ComparePicker } from '../components/well3d/Compare.jsx'
+import DemoCaption from '../components/well3d/DemoCaption.jsx'
 import FieldView from '../components/well3d/FieldView.jsx'
 import InversionLayers from '../components/well3d/InversionLayers.jsx'
 import { LayersControl, LayersReadout } from '../components/well3d/LayersControl.jsx'
 import { useInversionLayers } from '../components/well3d/inversionLayers.js'
 import { useCompare } from '../components/well3d/useCompare.js'
+import { useDemo } from '../components/well3d/useDemo.js'
+import { useSnapshot } from '../components/well3d/useSnapshot.js'
 import { buildPath, locate, nearestIndex } from '../components/well3d/path.js'
 import { STATUS, api, getCurves, runPath } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
@@ -165,11 +168,16 @@ export default function Well3dPage({ runs, active }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [active, path, scope, move, togglePlay, zoom])
 
+  const wellActive = active && scope === 'well'
+  const demo = useDemo({ data, path, active: wellActive, scene, md, playing: isPlaying, mdStart, mdEnd, setTravel, setMode })
+  const viewport = useRef(null)
+  const savePng = useSnapshot({ viewport, active: wellActive, run, curve: shown, md })
   const travelProps = useMemo(() => ({
     md, mdEnd, playing: isPlaying, speed, mode,
     onMd: setMd,
     onEnd: () => setTravel((t) => ({ ...t, playing: false })),
-  }), [md, mdEnd, isPlaying, speed, mode, setMd])
+    ...demo.overrides,
+  }), [md, mdEnd, isPlaying, speed, mode, setMd, demo.overrides])
 
   const readout = useMemo(() => {
     if (!path) return null
@@ -248,6 +256,14 @@ export default function Well3dPage({ runs, active }) {
               <Tooltip title="Zoom out (−)"><Button onClick={() => zoom(-1)}>Zoom out</Button></Tooltip>
               <Tooltip title="Fit the whole well (free camera)"><Button onClick={reset}>Reset view</Button></Tooltip>
             </ButtonGroup>
+            <ButtonGroup size="small" variant="outlined" aria-label="Demo and export">
+              <Tooltip title={demo.running ? 'Stop the demo (Esc)' : 'Scripted fly-through with captions'}>
+                <Button onClick={demo.running ? demo.stop : demo.start} variant={demo.running ? 'contained' : 'outlined'}>
+                  {demo.running ? '■ Stop demo' : '★ Demo'}
+                </Button>
+              </Tooltip>
+              <Tooltip title="Download the current 3D view as PNG"><Button onClick={savePng}>Save PNG</Button></Tooltip>
+            </ButtonGroup>
             <PickSelect label="Vertical exag." value={exaggeration} onChange={setExaggeration} options={EXAGGERATIONS} suffix="×" width={120} />
             <PickSelect label="Tube scale" value={tubeScale} onChange={setTubeScale} options={TUBE_SCALES} suffix="×" width={110} />
             <LayersControl inv={inv} curveSpec={data.color} />
@@ -257,7 +273,7 @@ export default function Well3dPage({ runs, active }) {
             <Slider size="small" aria-label="Measured depth" value={md} min={mdStart} max={mdEnd} step={0.5}
               onChange={(_, v) => setMd(v)} valueLabelDisplay="auto" valueLabelFormat={(v) => `${v.toFixed(1)} ft`} />
           </Box>
-          <Box sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+          <Box ref={viewport} sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             <Suspense fallback={<LinearProgress />}>
               <WellScene ref={scene} data={view ? view.inner : data} path={path} radius={view ? view.radius : radius}
                 radii={view ? view.innerRadii : radii} shell={view?.shell} active={active} travel={travelProps}>
@@ -293,6 +309,7 @@ export default function Well3dPage({ runs, active }) {
               {view && <CompareColorBar layout={view} data={view.inner === data ? view.outer : view.inner} />}
               <ColorBar spec={data.color} unit={data.unit} />
             </Box>
+            <DemoCaption caption={demo.caption} step={demo.step} total={demo.total} />
           </Box>
           {data.image && (
             <Typography variant="caption" color="text.secondary">

@@ -136,7 +136,7 @@ export default function WellScene({ ref, data, path, radius, radii, shell, activ
   return (
     <Canvas flat frameloop={active ? 'always' : 'never'} dpr={[1, 2]}
       camera={{ fov: 45, near: 0.5, far: 1e6, position: [0, 500, 1500] }}
-      gl={{ antialias: true }} style={{ background: '#f5f7fa' }}>
+      gl={{ antialias: true, preserveDrawingBuffer: true }} style={{ background: '#f5f7fa' }}>
       <WellTube data={data} path={path} radius={radii ?? radius} />
       {shell && <ShellTube data={shell.data} path={path} radius={shell.radii} />}
       <DepthTicks path={path} radius={radius} />

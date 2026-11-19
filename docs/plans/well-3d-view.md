@@ -275,3 +275,10 @@ endpoint. Nothing else depends on them.
   - Hover highlights a well (thicker tube, red label, others fade) and shows its MD range; a click without dragging selects that run in the shared selection and switches to Single well. Vertical exaggeration (default 5×), north arrow and scale bar; the camera looks across the field's long axis from 36° off vertical.
   - Wells logged in two runs (Z-25) are labelled with their MD range. Labels of nearby wells can overlap; hover shows the name.
   - Screenshot: `docs/screenshots/well3d-field.png`.
+
+- **Demo fly-through and PNG export (ideas E + G):** done on `feature/well3d-demo-mode`.
+  - **★ Demo** (`useDemo.js`, `demoScript.js`, `DemoCaption.jsx`) fits the whole well, switches to Follow, travels down at about well length / 25 s (50–1000 ft/s) and pauses 2.5 s at each stop with a caption, then returns to the overview.
+  - Stops are computed from the data: the most resistive and most conductive zone (log10 values clipped to the colour range, 2 % moving mean, first and last 3 % skipped), the largest DOI spread around the ring for image curves, and TD. Stops closer than 3 % of the well are merged. Non-resistivity curves say "Highest/Lowest value".
+  - **Stop demo**, Escape, a run/curve change, leaving the tab or any manual travel (space, arrows, slider) ends the demo and hands control back. While it runs, the demo overrides only the travel speed and end MD.
+  - **Save PNG** (`useSnapshot.js`) downloads `<run>_<curve>_<md>ft.png`: the WebGL canvas plus a run · curve · MD label. HTML overlays (readout, colour bar, caption) are not in the PNG. `window.__well3dSnapshot()` returns the same PNG as a data URL while the tab is active. The canvas now uses `preserveDrawingBuffer: true`.
+  - Screenshot: `docs/screenshots/well3d-demo.png` (Z-19 ZRL48A, resistive-zone stop).
