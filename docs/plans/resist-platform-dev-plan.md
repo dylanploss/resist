@@ -11,7 +11,7 @@ traceability: false
 
 ## Goal
 
-Build a resistivity QC and inversion platform on the Ekofisk data in the `dylanploss/resist` repo. The platform has a Python backend, a JavaScript frontend with a React-style view layer, and setup documentation that works on both Mac and Windows developer laptops. Three developers work in parallel, each owning one workstream with a defined interface between them. The 1D and 2D inversion algorithms are deferred until the data path and QC selection are working.
+Build a resistivity QC and inversion platform on the Ekofisk data in the `dylanploss/resist` repo. The platform has a Python (FastAPI) backend, a JavaScript frontend built with React and Material UI, and setup documentation that works on both Mac and Windows developer laptops. Three developers work in parallel, each owning one workstream with a defined interface between them. The 1D and 2D inversion algorithms are deferred until the data path and QC selection are working.
 
 ---
 
@@ -70,7 +70,7 @@ Define these first so the three can work in parallel.
 **Files:** `docs/api/contract.md` — **Verify:** all three can explain the interfaces above without looking at the notes.
 
 - Agree on the curve table columns, the QC JSON shape, and the endpoint list above.
-- Record the frontend library choice (React-style view layer is assumed; final library to be confirmed by Ove).
+- Record the frontend decisions: React for the view layer, Material UI as the layout library (decided by Ove).
 - Keep the contract to one page.
 
 ### Step 2: Repository Setup and Cross-Platform Docs (Ove)
@@ -86,7 +86,7 @@ Define these first so the three can work in parallel.
 
 **Files:** `backend/app.py`, `backend/requirements.txt`, `backend/tests/test_health.py` — **Verify:** `curl localhost:<port>/health` returns `{"status": "ok"}`.
 
-- Use Flask or FastAPI (Ove picks, documented in `SETUP.md`).
+- Use FastAPI with uvicorn (decided by Ove, recorded in `SETUP.md`).
 - Add the three endpoints from the contract, returning stub data until the real modules are wired in.
 - Keep the port in an environment variable with a default.
 
@@ -94,7 +94,7 @@ Define these first so the three can work in parallel.
 
 **Files:** `frontend/package.json`, `frontend/src/App.jsx`, `frontend/src/components/` — **Verify:** the dev server starts and the page shows the backend health status.
 
-- Create the app with Vite (or the chosen scaffold tool).
+- Create the app with Vite and React, and add Material UI as the layout library.
 - Add one call to `GET /health` and render the result.
 - Add placeholder components for the curve inventory and the QC table.
 
@@ -194,8 +194,8 @@ Define these first so the three can work in parallel.
 
 ## Open Decisions
 
-1. Frontend library: React-style view layer is assumed. Ove confirms before Step 4.
-2. Backend framework: Flask or FastAPI. Ove decides in Step 3 and records it in `SETUP.md`.
+1. Frontend: React with Material UI as the common layout library. Decided by Ove.
+2. Backend framework: FastAPI with uvicorn. Decided by Ove, recorded in `SETUP.md` and `docs/api/contract.md`.
 3. Relevance criteria for resistivity curves: David and Dylan agree on the list in Step 5.
 4. Inversion approach (1D and 2D): deferred to a later plan.
 

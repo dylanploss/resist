@@ -6,8 +6,10 @@ Status: draft v0.1. Changes go through this file, and consumers update in the sa
 
 | Topic | Decision | Status |
 |-------|----------|--------|
-| Backend framework | Flask | Assumed; Ove confirms |
-| Frontend | Vite + React (JavaScript) | Assumed; Ove confirms |
+| Backend framework | FastAPI (Python), uvicorn server | Decided |
+| Frontend | Vite + React (JavaScript) | Decided |
+| Frontend layout library | Material UI (`@mui/material`, with `@emotion/react` and `@emotion/styled`) | Decided |
+| CORS | Backend allows `http://localhost:5173` and `http://127.0.0.1:5173` | Decided |
 | Default backend port | 5000, set by `RESIST_BACKEND_PORT` | Fixed |
 | Default frontend port | 5173 (Vite default) | Fixed |
 
