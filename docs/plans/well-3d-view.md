@@ -1,7 +1,7 @@
 ---
 title: 3D well view of one QC curve
 slug: well-3d-view
-status: implemented on branch (2026-11-19: option A three.js + R3F v9 + drei; steps 1-9 done, step 10 ship pending); change request 2026-11-19 12:45: tube radius from QC depth of investigation (step 11)
+status: implemented and merged to main (PR #6, 74b3f70, 2026-11-19); steps 1-11, criteria 12-13 and ideas A-G done
 owner: Ove
 created: 2026-11-19
 traceability: false
@@ -281,4 +281,4 @@ endpoint. Nothing else depends on them.
   - Stops are computed from the data: the most resistive and most conductive zone (log10 values clipped to the colour range, 2 % moving mean, first and last 3 % skipped), the largest DOI spread around the ring for image curves, and TD. Stops closer than 3 % of the well are merged. Non-resistivity curves say "Highest/Lowest value".
   - **Stop demo**, Escape, a run/curve change, leaving the tab or any manual travel (space, arrows, slider) ends the demo and hands control back. While it runs, the demo overrides only the travel speed and end MD.
   - **Save PNG** (`useSnapshot.js`) downloads `<run>_<curve>_<md>ft.png`: the WebGL canvas plus a run · curve · MD label. HTML overlays (readout, colour bar, caption) are not in the PNG. `window.__well3dSnapshot()` returns the same PNG as a data URL while the tab is active. The canvas now uses `preserveDrawingBuffer: true`.
-  - Screenshot: `docs/screenshots/well3d-demo.png` (Z-19 ZRL48A, resistive-zone stop).
+  - Screenshot: `docs/screenshots/well3d-demo.png` (Z-19 ZRL48A, conductive-zone stop).
