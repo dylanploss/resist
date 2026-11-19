@@ -5,7 +5,7 @@ TE/TM reflection recursions, the three source/receiver layer cases, the closed-f
 ``key_201_2012`` digital-linear-filter Hankel transform. Everything is vectorised over stations x Tx-Rx pairs x
 frequencies x filter points, so one call evaluates a whole window, and ``jax.jacfwd`` gives an exact Jacobian.
 
-Channel assembly (compensation, top/bottom bins, geosignals, the guessed long-spacing layout, the whole-space
+Channel assembly (compensation, quadrant-sector bins, geosignals, the guessed long-spacing layout, the whole-space
 apparent-resistivity transform) follows ``ADRForward`` exactly; ``tests/test_jax_forward.py`` checks parity with
 the empymod path.
 
@@ -24,6 +24,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
+from backend.data.quadrants import BINS
 from backend.inversion.adr_forward import FT, INCH, ADRForward
 
 jax.config.update("jax_enable_x64", True)
@@ -32,6 +33,7 @@ jax.config.update("jax_compilation_cache_dir",
                   __import__("os").environ.get("RESIST_JAX_CACHE", str(__import__("pathlib").Path.home() / ".cache" / "resist-jax")))
 jax.config.update("jax_persistent_cache_min_compile_time_secs", 1.0)
 STATION_BUCKET = 32         # station counts are padded to a multiple of this so windows share compiled shapes
+SMALL_BUCKET = 8            # ... or of this up to STATION_BUCKET (short sliding windows of a few stations)
 
 MU0 = 4e-7 * np.pi
 EPS0 = 8.854187817e-12
@@ -266,6 +268,17 @@ class JaxADRForward:
                         tx[name] = -d * INCH
                     self.ls_tx.append(name)
                     pairs += [(name, "ls"), (name, "near_dn")]
+        if fwd.azimuthal:
+            side_bins = {sd: fwd._side_bins(sd) for sd in dict.fromkeys(fwd.zr_sides + fwd.zg_sides)}
+            need = sorted({b for v in side_bins.values() for b in v} | {(b + BINS // 2) % BINS
+                                                                      for v in side_bins.values() for b in v})
+            pos = {b: i for i, b in enumerate(need)}
+            self.bins = np.array(need)
+            self.opp = np.array([pos[(b + BINS // 2) % BINS] for b in need])
+            self.side_idx = {sd: np.array([pos[b] for b in v]) for sd, v in side_bins.items()}
+            psi = 2 * np.pi * (self.bins + (0.0 if fwd.quadrant == "bin" else 0.5)) / BINS
+            self.bin_weights = np.column_stack([np.full(len(need), c), s_ * self.polarity * np.cos(psi),
+                                                s_ * self.polarity * np.sin(psi)])
         self.pairs = list(dict.fromkeys(pairs))
         self.pair_index = {p: i for i, p in enumerate(self.pairs)}
         self.tx_off = np.array([tx[t] for t, _ in self.pairs])
@@ -306,82 +319,93 @@ class JaxADRForward:
         return _voltage(Tp, t_f * flip, b_f * flip)
 
     def raw(self, zi, sh, sv, zc, t_f, h_f):
-        """Compensated phase (deg) and attenuation (dB) per kind, exactly as ADRForward._raw / _raw_azimuthal."""
+        """Compensated phase (deg) and attenuation (dB), as ``ADRForward._raw`` / ``_raw_azimuthal``.
+
+        Returns ``{"avg": (S, n_chan)}`` pairs and, when azimuthal, ``"bins"`` ``(S, nb, n_chan)``, ``"ls"``
+        ``(S, nb, n_long)`` and geosignals ``(S, nb, n_geo, 2)`` for the bins in ``self.bins`` only (the selected
+        quadrant sides and their opposites)."""
         fwd = self.fwd
         T, sgn = self._tensors(zi, sh, sv, zc, t_f)
-        c, s_ = self.tilt
-        look = {"T": self.polarity * h_f, "B": -self.polarity * h_f}
-        rdir = {"A": t_f, "T": c * t_f + s_ * look["T"], "B": c * t_f + s_ * look["B"]}
-        out = {}
 
         def angle(z):
             return jnp.rad2deg(jnp.angle(z))
 
-        avg_p, avg_a, tb = [], [], {"T": ([], []), "B": ([], [])}
+        def comp(up, dn):
+            return -0.5 * (angle(up) + angle(dn)), 10 * (jnp.log10(jnp.abs(up)) + jnp.log10(jnp.abs(dn)))
+
+        V = lambda pair, fi, b: self._volt(T, sgn, t_f, b, pair, fi)
+        avg_p, avg_a = [], []
         for ch in fwd.channels:
             fi = self.fi[ch.frequency_hz]
             si = int(np.searchsorted(fwd.spacings, ch.spacing_in))
-            V = lambda t, r_, k: self._volt(T, sgn, t_f, rdir[k], (t, r_), fi)
-            up = V(f"up{si}", "near_up", "A") / V(f"up{si}", "near_dn", "A")
-            dn = V(f"dn{si}", "near_dn", "A") / V(f"dn{si}", "near_up", "A")
-            avg_p.append(-0.5 * (angle(up) + angle(dn)))
-            avg_a.append(10 * (jnp.log10(jnp.abs(up)) + jnp.log10(jnp.abs(dn))))
-            if fwd.azimuthal:
-                for key, (ku, kd) in {"T": ("T", "B"), "B": ("B", "T")}.items():
-                    up = V(f"up{si}", "near_up", ku) / V(f"up{si}", "near_dn", ku)
-                    dn = V(f"dn{si}", "near_dn", kd) / V(f"dn{si}", "near_up", kd)
-                    tb[key][0].append(-0.5 * (angle(up) + angle(dn)))
-                    tb[key][1].append(10 * (jnp.log10(jnp.abs(up)) + jnp.log10(jnp.abs(dn))))
-        out["avg"] = (jnp.stack(avg_p, -1), jnp.stack(avg_a, -1))
+            p, a = comp(V((f"up{si}", "near_up"), fi, t_f) / V((f"up{si}", "near_dn"), fi, t_f),
+                        V((f"dn{si}", "near_dn"), fi, t_f) / V((f"dn{si}", "near_up"), fi, t_f))
+            avg_p.append(p); avg_a.append(a)
+        out = {"avg": (jnp.stack(avg_p, -1), jnp.stack(avg_a, -1))}
         if not fwd.azimuthal:
-            return out, None
-        out["T"] = tuple(jnp.stack(v, -1) for v in tb["T"])
-        out["B"] = tuple(jnp.stack(v, -1) for v in tb["B"])
+            return out
+        # Receiver voltage is linear in its direction: evaluate along (axis, high, right), combine per bin.
+        r_f = fwd.rotation * jnp.cross(t_f, h_f)
+        W = jnp.asarray(self.bin_weights, self.dtype)                        # (nb, 3)
+
+        def Vb(pair, fi):
+            return jnp.stack([V(pair, fi, ax) for ax in (t_f, h_f, r_f)], -1) @ W.T.astype(T[0].dtype)   # (S, nb)
+
+        opp = self.opp
+        bp, ba = [], []
+        for ch in fwd.channels:
+            fi = self.fi[ch.frequency_hz]
+            si = int(np.searchsorted(fwd.spacings, ch.spacing_in))
+            # Mirror pairing: uphole transmitter at the bin's look direction, downhole transmitter at the opposite.
+            p, a = comp(Vb((f"up{si}", "near_up"), fi) / Vb((f"up{si}", "near_dn"), fi),
+                        Vb((f"dn{si}", "near_dn"), fi)[:, opp] / Vb((f"dn{si}", "near_up"), fi)[:, opp])
+            bp.append(p); ba.append(a)
+        out["bins"] = (jnp.stack(bp, -1), jnp.stack(ba, -1))
         if fwd.long_spacings:
-            for key, k in (("LT", "T"), ("LB", "B")):
-                ph, at = [], []
-                for ch, tname in zip(fwd.long_spacings, self.ls_tx):
-                    fi = self.fi[ch.frequency_hz]
-                    ratio = (self._volt(T, sgn, t_f, rdir[k], (tname, "near_dn"), fi)
-                             / self._volt(T, sgn, t_f, rdir[k], (tname, "ls"), fi))
-                    ph.append(-angle(ratio)); at.append(20 * jnp.log10(jnp.abs(ratio)))
-                out[key] = (jnp.stack(ph, -1), jnp.stack(at, -1))
-        gs = []
-        for j, g in enumerate(fwd.geosignals):
-            fi = self.fi[g.frequency_hz]
-            vt = self._volt(T, sgn, t_f, rdir["T"], (f"geo{j}", "geo"), fi)
-            vb = self._volt(T, sgn, t_f, rdir["B"], (f"geo{j}", "geo"), fi)
-            gs += [angle(vt / vb), 20 * jnp.log10(jnp.abs(vb / vt))]
-        return out, (jnp.stack(gs, -1) if gs else None)
+            lp, la = [], []
+            for ch, tname in zip(fwd.long_spacings, self.ls_tx):
+                fi = self.fi[ch.frequency_hz]
+                ratio = Vb((tname, "near_dn"), fi) / Vb((tname, "ls"), fi)
+                lp.append(-angle(ratio)); la.append(20 * jnp.log10(jnp.abs(ratio)))
+            out["ls"] = (jnp.stack(lp, -1), jnp.stack(la, -1))
+        if fwd.geosignals:
+            gs = []
+            for j, g in enumerate(fwd.geosignals):
+                vg = Vb((f"geo{j}", "geo"), self.fi[g.frequency_hz])
+                gs.append(jnp.stack([angle(vg / vg[:, opp]), 20 * jnp.log10(jnp.abs(vg[:, opp] / vg))], -1))
+            out["gs"] = jnp.stack(gs, 2)                                         # (S, nb, n_geo, 2)
+        return out
 
     # -- whole-space transform ---------------------------------------------------------------------
     def tables(self):
         """Homogeneous-isotropic transform tables from this same kernel (exact self-consistency)."""
         if self._tables is None:
             grid = np.asarray(self.fwd.rho_grid)
-            t_f = jnp.array([[1.0, 0.0, 0.0]])
-            h_f = jnp.array([[0.0, 0.0, -1.0]])
+            t_f = jnp.array([[1.0, 0.0, 0.0]], self.dtype)
+            h_f = jnp.array([[0.0, 0.0, -1.0]], self.dtype)
 
             def one(r):
-                sh = jnp.array([1.0 / r]); out, _ = self.raw(jnp.zeros((0,)), sh, sh, jnp.zeros(1), t_f, h_f)
-                return out
+                sh = jnp.array([1.0 / r], self.dtype)
+                return self.raw(jnp.zeros((0,), self.dtype), sh, sh, jnp.zeros(1, self.dtype), t_f, h_f)
 
-            res = jax.jit(jax.vmap(one))(jnp.asarray(grid))
+            res = jax.jit(jax.vmap(one))(jnp.asarray(grid, self.dtype))
             tabs = {}
-            for key in ("avg", "LT"):
+            for key in ("avg", "ls"):
                 if key in res:
-                    ph, at = (np.asarray(v)[:, 0, :] for v in res[key])
+                    # homogeneous: every bin reads the same, so bin 0 of the long-spacing set is the table
+                    ph, at = (np.asarray(v)[:, 0, 0, :] if key == "ls" else np.asarray(v)[:, 0, :] for v in res[key])
                     ph = np.maximum.accumulate(ph[::-1], axis=0)[::-1]
                     at = np.minimum.accumulate(at, axis=0)
-                    tabs[key] = (jnp.asarray(ph), jnp.asarray(at))
-            self._tables = (jnp.asarray(np.log10(grid)), tabs)
+                    tabs[key] = (jnp.asarray(ph, self.dtype), jnp.asarray(at, self.dtype))
+            self._tables = (jnp.asarray(np.log10(grid), self.dtype), tabs)
         return self._tables
 
-    def apparent(self, phase, atten, key):
+    def apparent(self, phase, atten, key="avg"):
+        """Apparent resistivities (phase, attenuation) for channel-last arrays of any leading shape."""
         lr, tabs = self.tables()
-        ph_t, at_t = tabs["LT" if key in ("LT", "LB") else "avg"]
-        rp = jnp.stack([10 ** jnp.interp(-phase[:, k], -ph_t[:, k], lr) for k in range(phase.shape[1])], -1)
-        ra = jnp.stack([10 ** jnp.interp(-atten[:, k], -at_t[:, k], lr) for k in range(atten.shape[1])], -1)
+        ph_t, at_t = tabs[key]
+        rp = jnp.stack([10 ** jnp.interp(-phase[..., k], -ph_t[:, k], lr) for k in range(phase.shape[-1])], -1)
+        ra = jnp.stack([10 ** jnp.interp(-atten[..., k], -at_t[:, k], lr) for k in range(atten.shape[-1])], -1)
         return rp, ra
 
     # -- full prediction -----------------------------------------------------------------------------
@@ -392,20 +416,27 @@ class JaxADRForward:
         zi = bounds_m * n[2]
         sh, sv = 1.0 / rh, 1.0 / rv
         zc = ned @ n
+        axis = axis / jnp.linalg.norm(axis, axis=1, keepdims=True)
+        high = high / jnp.linalg.norm(high, axis=1, keepdims=True)
         t_f, h_f = self._station_frames(n, axis, high)
-        out, gs = self.raw(zi, sh, sv, zc, t_f, h_f)
-        cols = []
-        rp, ra = self.apparent(*out["avg"], "avg")
-        cols += [jnp.log10(rp), jnp.log10(ra)]
-        if self.fwd.azimuthal:
-            for top, bottom in (("T", "B"), ("LT", "LB")):
-                if top not in out:
-                    continue
-                rt, rb = self.apparent(*out[top], top), self.apparent(*out[bottom], bottom)
-                for m in (0, 1):
-                    cols.append(jnp.log10(jnp.stack([rt[m], rb[m]], -1).reshape(rt[m].shape[0], -1)))
-            if gs is not None:
-                cols.append(gs)
+        out = self.raw(zi, sh, sv, zc, t_f, h_f)
+        rp, ra = self.apparent(*out["avg"])
+        cols = [jnp.log10(rp), jnp.log10(ra)]
+        if not self.fwd.azimuthal:
+            return jnp.concatenate(cols, axis=1)
+        S = zc.shape[0]
+        for key, tab in (("bins", "avg"), ("ls", "ls")):
+            if key not in out:
+                continue
+            count = out[key][0].shape[-1]
+            for R in self.apparent(*out[key], tab):                              # (S, nb, count)
+                # Conductivity mean over the sector, as for delivered images; one bin when quadrant == "bin"
+                sides = [1.0 / jnp.mean(1.0 / R[:, self.side_idx[sd], :], axis=1) for sd in self.fwd.zr_sides]
+                cols.append(jnp.log10(jnp.stack(sides, axis=2).reshape(S, count * len(sides))))
+        if "gs" in out:
+            for j in range(len(self.fwd.geosignals)):
+                for sd in self.fwd.zg_sides:
+                    cols.append(out["gs"][:, self.side_idx[sd], j, :].mean(axis=1))
         return jnp.concatenate(cols, axis=1)
 
     def predict(self, model, traj):
@@ -423,6 +454,12 @@ class JaxADRForward:
 
 
 # ----------------------------------------------------------------------------------------------- inversion hook
+def pad_stations(n):
+    """Padded station count, so windows of similar length share one compiled shape."""
+    b = SMALL_BUCKET if n <= STATION_BUCKET else STATION_BUCKET
+    return max(SMALL_BUCKET, -(-n // b) * b)
+
+
 def layout_to_model(x, k, n_aniso, fit_dip):
     """jnp version of invert.Layout.model: x (earth params) -> (bounds_m, rh, rv, dip_deg)."""
     i = k - 1
@@ -446,7 +483,7 @@ class JaxTheory:
         jf = shared_jax_forward(fwd, dt)
         high = traj.high if traj.high is not None else np.tile([0.0, 0.0, -1.0], (len(traj), 1))
         self.n = len(traj)
-        size = max(STATION_BUCKET, -(-self.n // STATION_BUCKET) * STATION_BUCKET)
+        size = pad_stations(self.n)
         pad = lambda v: np.concatenate([v, np.repeat(v[-1:], size - self.n, axis=0)])       # padded rows dropped
         self.args = (jnp.asarray(dip_azimuth, dt),) + tuple(jnp.asarray(pad(v), dt) for v in (traj.ned, traj.axis, high))
         self._f, self._j = _compiled(jf, k, n_aniso, fit_dip)
@@ -476,7 +513,8 @@ _SHARED: dict = {}
 
 
 def shared_jax_forward(fwd: ADRForward, dtype=jnp.float64) -> JaxADRForward:
-    key = (fwd.receiver_sep_in, fwd.azimuthal, fwd.tilt_deg, fwd.ls_receiver_in, jnp.dtype(dtype).name)
+    key = (fwd.receiver_sep_in, fwd.azimuthal, fwd.tilt_deg, fwd.ls_receiver_in, fwd.quadrant, tuple(fwd.zr_sides),
+           tuple(fwd.zg_sides), fwd.rotation, fwd.polarity, jnp.dtype(dtype).name)
     if key not in _SHARED:
         jf = JaxADRForward(fwd, dtype)
         jf.tables()

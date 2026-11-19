@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from backend.inversion.adr_forward import ADRForward
-from backend.inversion.jax_forward import STATION_BUCKET, layout_to_model, shared_jax_forward
+from backend.inversion.jax_forward import layout_to_model, pad_stations, shared_jax_forward
 
 
 @dataclass
@@ -39,7 +39,7 @@ class WindowArrays:
 
 
 def pad_size(n):
-    return max(STATION_BUCKET, -(-n // STATION_BUCKET) * STATION_BUCKET)
+    return pad_stations(n)
 
 
 def window_arrays(data, weights, sigma, lc, lo, hi, size=None, dip_az=None):
@@ -68,17 +68,21 @@ _SOLVERS: dict = {}
 
 
 def solver(fwd: ADRForward, k, n_aniso, fit_dip, iters=25, pivot=1.0):
-    """Compiled ``solve(x0 (B,P), win dict of (B,...)) -> (x (B,P), cost (B,), chi (B,))``."""
+    """Compiled ``solve(x0 (B,P), win dict of (B,...)) -> (x (B,P), cost (B,), chi (B,), pred (B,size,m))``.
+
+    ``pred`` is the level-corrected theory at the solution (``Inverter`` ``FitResult.pred`` without bias)."""
     key = (fwd.receiver_sep_in, fwd.azimuthal, k, n_aniso, fit_dip, iters, pivot)
     if key in _SOLVERS:
         return _SOLVERS[key]
     jf = shared_jax_forward(fwd)
 
-    def resid(x, w):
+    def theory(x, w):
         b, rh, rv, dip = layout_to_model(x, k, n_aniso, fit_dip)
         th = jf.predict_arrays(b, rh, rv, dip, w["dip_az"], w["ned"], w["axis"], w["high"])
-        th = th + w["corr_a"] + w["corr_g"] * (th - pivot)
-        r = (th - w["obs"]) * w["wsig"] * w["mask"]
+        return th + w["corr_a"] + w["corr_g"] * (th - pivot)
+
+    def resid(x, w):
+        r = (theory(x, w) - w["obs"]) * w["wsig"] * w["mask"]
         return jnp.where(w["mask"] > 0, r, 0.0).ravel()
 
     def cost(x, w):
@@ -109,7 +113,7 @@ def solver(fwd: ADRForward, k, n_aniso, fit_dip, iters=25, pivot=1.0):
         x0 = jnp.clip(x0, w["lo"], w["hi"])
         x, _, c = jax.lax.fori_loop(0, iters, body, (x0, jnp.asarray(1e-2, x0.dtype), cost(x0, w)))
         n_used = jnp.maximum(jnp.sum(w["mask"]), 1.0)
-        return x, c, jnp.sqrt(2.0 * c / n_used)
+        return x, c, jnp.sqrt(2.0 * c / n_used), theory(x, w)
 
     fn = jax.jit(jax.vmap(one))
     _SOLVERS[key] = fn
@@ -125,15 +129,15 @@ def default_chunk():
 
 
 def solve_chunked(fn, x0, windows, chunk=None):
-    """Run ``fn`` over a list of windows in chunks (bounded device memory). Returns numpy arrays."""
+    """Run ``fn`` over a list of windows in chunks (bounded device memory). Returns numpy (x, cost, chi, pred)."""
     chunk = chunk or default_chunk()
-    xs, cs, chis = [], [], []
+    out = [[], [], [], []]
     for i in range(0, len(windows), chunk):
         part = windows[i:i + chunk]
         # pad the chunk to a fixed batch size so the compiled shape is reused
-        fill = chunk - len(part) if len(windows) > chunk else 0
+        fill = chunk - len(part)
         batch = part + [part[-1]] * fill
         xb = np.concatenate([x0[i:i + len(part)], np.repeat(x0[i + len(part) - 1:i + len(part)], fill, axis=0)])
-        x, c, chi = fn(jnp.asarray(xb), stack(batch))
-        xs.append(np.asarray(x)[:len(part)]); cs.append(np.asarray(c)[:len(part)]); chis.append(np.asarray(chi)[:len(part)])
-    return np.concatenate(xs), np.concatenate(cs), np.concatenate(chis)
+        for acc, v in zip(out, fn(jnp.asarray(xb), stack(batch))):
+            acc.append(np.asarray(v)[:len(part)])
+    return tuple(np.concatenate(v) for v in out)

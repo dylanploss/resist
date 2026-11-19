@@ -19,6 +19,15 @@ class ForwardTests(unittest.TestCase):
         self.assertTrue(np.all(rp > ra))
         self.assertTrue(np.all(ra > 9.0))
 
+    def test_tool_straddling_a_boundary_is_finite_and_continuous(self):
+        # empymod returns NaN when a transmitter is in a deeper layer than a receiver; reciprocity fills those pairs.
+        fwd = ADRForward()
+        cos_rel = np.cos(np.deg2rad(87))
+        zc = np.linspace(-0.08, 0.08, 17)
+        p = np.array([fwd._raw([0.0], [8.0, 40.0], [1.5, 1.5], z, cos_rel)[0] for z in zc])
+        self.assertTrue(np.isfinite(p).all())
+        self.assertLess(np.abs(np.diff(p, axis=0)).max(), 0.5 * np.ptp(p, axis=0).max())
+
 
 class InversionTests(unittest.TestCase):
     def test_recovers_boundary_and_channel_bias(self):
@@ -74,13 +83,15 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(used["ARH16A"]["weight"], 0.5)
         self.assertIsNotNone(used["ARH16A"]["correction"])
         self.assertEqual(used["ARM32A"]["weight"], 0.25)
-        # An image gives top and bottom: delivered T curve when present, else image bins 0 / 16.
-        self.assertEqual(plan["_sources"]["ZRH16PT"], "ZRH16PT")
-        self.assertEqual(plan["_sources"]["ZRH16PB"], ("ZRH16P", 16))
-        self.assertEqual(plan["_sources"]["ZRL48PT"], ("ZRL48P", 0))
+        # An image gives top and bottom 90-degree sectors of the image itself, for every run.
+        self.assertEqual(plan["_sources"]["ZRH16PT"], ("ZRH16P", "T"))
+        self.assertEqual(plan["_sources"]["ZRH16PB"], ("ZRH16P", "B"))
+        self.assertEqual(plan["_sources"]["ZRL48PT"], ("ZRL48P", "T"))
         self.assertEqual(used["ZRL48PB"]["kind"], "bottom")
-        self.assertEqual(plan["_sources"]["ZGM112PT"], ("ZGM112P", 0))
+        self.assertEqual(plan["_sources"]["ZGM112PT"], ("ZGM112P", "T"))
         self.assertEqual(used["ZGM112PT"]["kind"], "geosignal")
+        delivered_only = build_plan(SimpleNamespace(curves={"ZRM32AT": None}), ["ZRM32AT"])
+        self.assertEqual(delivered_only["_sources"]["ZRM32AT"], "ZRM32AT")
         self.assertIn("left/right", reasons["ZRH16PL"])
         self.assertTrue(used["ZRM50PT"]["guessed_geometry"])
         self.assertEqual(used["ZRM50PB"]["weight"], 0.5)
@@ -97,6 +108,21 @@ class PlanTests(unittest.TestCase):
 
         image = np.array([[10.0, 10.0, 10.0, 10.0], [5.0, 20.0, np.nan, -999.25]])
         np.testing.assert_allclose(azimuthal_average(image), [10.0, 8.0])
+
+    def test_rh_bounds_follow_config(self):
+        from backend.inversion.invert import Layout
+
+        lay = Layout(FitConfig(n_layers=2, rh_min=2.0, rh_max=200.0), 1, 0.0)
+        lo, hi = lay.bounds(-10, 10)
+        np.testing.assert_allclose(lo[1:3], np.log10([2.0, 2.0]))
+        np.testing.assert_allclose(hi[1:3], np.log10([200.0, 200.0]))
+
+    def test_slices_tile_the_interval(self):
+        from backend.inversion.service import slice_centres
+
+        np.testing.assert_allclose(slice_centres(100.0, 120.0, 4.0), [102, 106, 110, 114, 118])
+        np.testing.assert_allclose(slice_centres(100.0, 121.0, 4.0), [102, 106, 110, 114, 118, 122])
+        np.testing.assert_allclose(slice_centres(100.0, 102.0, 4.0), [102])
 
 
 class DirectionalForwardTests(unittest.TestCase):
@@ -120,6 +146,15 @@ class DirectionalForwardTests(unittest.TestCase):
         for lab in ("ZGM112PT", "ZGM112AT", "ZGL112PT"):
             self.assertAlmostEqual(v[lab], 0.0, places=6)
 
+    def test_inclined_homogeneous_zero_geosignal_with_unnormalised_vectors(self):
+        fwd = ADRForward(azimuthal=True, quadrant="bin", long_spacings=())
+        traj = Trajectory(np.zeros(1), np.zeros((1, 3)), np.array([[0.999, 0, 0.0436]]),
+                          np.array([[0.0436, 0, -0.999]]))
+        row = fwd.predict(LayerModel(np.array([]), np.array([10.0]), np.array([10.0])), traj)[0]
+        for lab, val in zip(fwd.channel_labels(), row):
+            if lab.startswith("ZG"):
+                self.assertAlmostEqual(val, 0.0, places=3, msg=lab)
+
     def test_bottom_bin_sees_resistive_bed_below_and_mirror_flips_sign(self):
         (below,) = self.values(LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0])), [0.8])
         (above,) = self.values(LayerModel(np.array([-1.0]), np.array([50.0, 8.0]), np.array([50.0, 8.0])), [-0.8])
@@ -131,6 +166,66 @@ class DirectionalForwardTests(unittest.TestCase):
         self.assertGreater(below["ZGM112AT"], 0.1)
         self.assertAlmostEqual(above["ZRL48PT"], below["ZRL48PB"], places=6)
         self.assertAlmostEqual(above["ZGM112PT"], -below["ZGM112PT"], places=6)
+
+    def test_sector_quadrants_symmetric_in_layers_and_follow_tool_roll(self):
+        fwd = ADRForward(azimuthal=True, zr_sides=("T", "R", "B", "L"), zg_sides=("T", "R", "B", "L"))
+        labels = fwd.channel_labels()
+        model = LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0]), 2.0, 0.0)
+        traj = self.horizontal(np.array([0.4, 0.7]))
+        up = dict(zip(labels, fwd.predict(model, traj)[1]))
+        self.assertAlmostEqual(up["ZRM48PR"], up["ZRM48PL"], places=9)
+        self.assertAlmostEqual(up["ZGM112PR"], 0.0, places=9)
+        self.assertGreater(up["ZRM48PB"], up["ZRM48PT"])
+        traj.high = np.tile([0.0, 1.0, 0.0], (len(traj), 1))   # roll the tool 90 degrees about its axis
+        rolled = dict(zip(labels, fwd.predict(model, traj)[1]))
+        self.assertAlmostEqual(rolled["ZRM48PT"], rolled["ZRM48PB"], places=9)
+        self.assertAlmostEqual(abs(rolled["ZRM48PR"] - rolled["ZRM48PL"]), up["ZRM48PB"] - up["ZRM48PT"], places=9)
+
+    def test_sector_flattens_single_bin_contrast(self):
+        model = LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0]))
+        traj = self.horizontal(np.array([0.7]))
+        out = {}
+        for mode in ("bin", "sector"):
+            fwd = ADRForward(azimuthal=True, quadrant=mode)
+            out[mode] = dict(zip(fwd.channel_labels(), fwd.predict(model, traj)[0]))
+        ratio = (out["sector"]["ZRM48PB"] - out["sector"]["ZRM48PT"]) / (out["bin"]["ZRM48PB"] - out["bin"]["ZRM48PT"])
+        self.assertTrue(0.6 < ratio < 1.0)
+
+
+class QuadrantTests(unittest.TestCase):
+    def test_sectors_tile_bins_and_average_conductivity(self):
+        from backend.data.quadrants import SIDES, quadrant, sector_bins
+
+        self.assertEqual(sorted(b for s in SIDES for b in sector_bins(s)), list(range(32)))
+        self.assertEqual(sector_bins("T"), [28, 29, 30, 31, 0, 1, 2, 3])
+        image = np.full((2, 32), 10.0)
+        image[0, sector_bins("B")] = [5.0, 20.0] * 4
+        image[1, 29] = np.nan
+        np.testing.assert_allclose(quadrant(image, "B"), [8.0, 10.0])
+        np.testing.assert_allclose(quadrant(image, "T"), [10.0, 10.0])
+        np.testing.assert_allclose(quadrant(image, "B", method="bin"), [5.0, 10.0])
+        geo = np.zeros((1, 32))
+        geo[0, sector_bins("R")] = np.arange(8)
+        self.assertAlmostEqual(quadrant(geo, "R", resistivity=False)[0], 3.5)
+        with self.assertRaises(ValueError):
+            quadrant(np.ones((3, 16)), "T")
+
+    def test_matches_delivered_quadrant_curves_on_z20(self):
+        from pathlib import Path
+
+        from backend.data.loader import load_run
+        from backend.data.quadrants import CENTRE, quadrant
+
+        path = Path(__file__).resolve().parents[2] / "data" / "2_4-Z-20_18840-23791ft_RES_GEOSIGNAL.dlis"
+        if not path.exists():
+            self.skipTest("Z-20 data not available")
+        c = load_run(path).curves
+        for side in CENTRE:
+            ok = np.isfinite(c["ZRM48P" + side]) & np.all(c["ZRM48P"] > 0, axis=1)
+            err = np.abs(np.log10(quadrant(c["ZRM48P"][ok], side) / c["ZRM48P" + side][ok]))
+            single = np.abs(np.log10(quadrant(c["ZRM48P"][ok], side, method="bin") / c["ZRM48P" + side][ok]))
+            self.assertLess(np.median(err), np.log10(1.02))
+            self.assertLess(np.median(err), np.median(single))
 
 
 class RobustnessTests(unittest.TestCase):

@@ -1,7 +1,5 @@
 """HTTP endpoints for 1.5D inversion of a QC-selected curve set."""
 
-from typing import Literal
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,17 +18,21 @@ class InversionRequest(BaseModel):
     layers: int = Field(3, ge=1, le=4)
     calibration: bool = True
     quick: bool = False
-    mode: Literal["single", "scan"] = "single"
-    window_ft: float = Field(100.0, ge=20.0, le=1000.0)     # scan only
-    overlap: float = Field(0.5, ge=0.0, le=0.9)            # scan only
+    slice_ft: float = Field(service.DEFAULT_SLICE_FT, ge=1.0, le=50.0)
+    window_ft: float = Field(service.DEFAULT_WINDOW_FT, ge=2.0, le=200.0)
+    rh_min_ohmm: float = Field(0.1, gt=0.0, le=10000.0)
+    rh_max_ohmm: float = Field(1000.0, gt=0.0, le=10000.0)
 
     @model_validator(mode="after")
     def check_interval(self):
         if self.md_max_ft <= self.md_min_ft:
             raise ValueError("md_max_ft must be greater than md_min_ft")
-        limit = service.MAX_SCAN_FT if self.mode == "scan" else service.MAX_INTERVAL_FT
-        if self.md_max_ft - self.md_min_ft > limit:
-            raise ValueError(f"interval longer than {limit:.0f} ft for mode '{self.mode}'")
+        if self.md_max_ft - self.md_min_ft > service.MAX_INTERVAL_FT:
+            raise ValueError(f"interval longer than {service.MAX_INTERVAL_FT:.0f} ft")
+        if self.window_ft < self.slice_ft:
+            raise ValueError("window_ft must be at least slice_ft")
+        if self.rh_max_ohmm <= self.rh_min_ohmm:
+            raise ValueError("rh_max_ohmm must be greater than rh_min_ohmm")
         return self
 
 
@@ -39,8 +41,8 @@ def defaults(run: str) -> dict:
     well_run = runs.get_run(run)
     return {"run": run, **service.suggested_interval(well_run), "channels": service.channel_labels(),
             "max_stations": service.MAX_STATIONS, "max_interval_ft": service.MAX_INTERVAL_FT,
-            "max_scan_ft": service.MAX_SCAN_FT, "device": service.compute_device(),
-            "scan_available": service.compute_backend() == "jax"}
+            "slice_ft": service.DEFAULT_SLICE_FT, "window_ft": service.DEFAULT_WINDOW_FT, "max_slices": service.MAX_SLICES,
+            "device": service.compute_device(), "batched": service.compute_backend() == "jax"}
 
 
 @router.post("/plan")
@@ -48,7 +50,9 @@ def plan(request: InversionRequest) -> dict:
     well_run = runs.get_run(request.run)
     span = request.md_max_ft - request.md_min_ft
     return {**service.public_plan(service.build_plan(well_run, request.curves, request.calibration)),
-            "estimated_stations": int(span // request.step_ft) + 1}
+            "estimated_stations": int(span // request.step_ft) + 1,
+            "estimated_slices": len(service.slice_centres(request.md_min_ft, request.md_max_ft, request.slice_ft)),
+            "stations_per_window": int(request.window_ft // request.step_ft) + 1}
 
 
 @router.post("/jobs")

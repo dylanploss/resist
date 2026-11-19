@@ -122,7 +122,7 @@ class BatchedLMTests(unittest.TestCase):
         fn = solver(fwd, 2, lay.n_aniso, False, iters=30)
         import jax.numpy as jnp
         from backend.inversion.batched import stack
-        x, c, chi = fn(jnp.asarray([[-6.0, 1.3, 1.3, 0.1]]), stack([win]))      # start: boundary above the well
+        x, c, chi, _ = fn(jnp.asarray([[-6.0, 1.3, 1.3, 0.1]]), stack([win]))      # start: boundary above the well
         m = lay.model(np.asarray(x)[0])
         self.assertAlmostEqual(m.boundaries_m[0] / FT, 4.0, delta=0.3)
         self.assertLess(float(chi[0]), 0.5)
