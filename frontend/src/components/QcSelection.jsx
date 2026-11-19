@@ -4,6 +4,7 @@ import {
   TableCell, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import { FREQ_LABEL, STATUS, api, compareGroup, fmt, runPath } from '../api.js'
+import { useSelection } from '../selection.js'
 import ApiStatus from './ApiStatus.jsx'
 import ArOverlay from './ArOverlay.jsx'
 import ChannelPicker from './ChannelPicker.jsx'
@@ -99,6 +100,8 @@ function QcSelection({ runs, run, onRunChange, onSelectionChange, onOpenInversio
   const [focus, setFocus] = useState(null)
   const [save, setSave] = useState({ saving: false, saved: null, error: null })
   const qcKey = `${run}|${nSelect}`
+  const selection = useSelection()
+  const view3d = selection ? (name) => selection.openWell3d(run, name) : undefined
 
   useEffect(() => {
     if (!run) return undefined
@@ -191,7 +194,7 @@ function QcSelection({ runs, run, onRunChange, onSelectionChange, onOpenInversio
           <Card>
             <SelectionSummary rows={rows} checked={checked} saving={save.saving} saved={save.saved}
               onRemove={(name) => setSelection(checked.filter((n) => n !== name), [], [name])}
-              onSave={saveSelection} />
+              onSave={saveSelection} onView3d={view3d} />
             {save.error && <Alert severity="error" sx={{ mt: 1 }}>Save failed: {save.error}</Alert>}
             {onOpenInversion && (
               <Button variant="outlined" size="small" sx={{ mt: 1 }} disabled={!checked.length}
@@ -252,7 +255,7 @@ function QcSelection({ runs, run, onRunChange, onSelectionChange, onOpenInversio
                   onToggleChecked={(name) => (checked.includes(name)
                     ? setSelection(checked.filter((n) => n !== name), [], [name])
                     : setSelection([...checked, name], [name], []))}
-                  onTogglePlotted={togglePlotted} onShowCurve={showCurves} />
+                  onTogglePlotted={togglePlotted} onShowCurve={showCurves} onView3d={view3d} />
               </AccordionDetails>
             </Accordion>
           </>

@@ -2,8 +2,8 @@
 
 Resistivity QC and inversion platform for the Ekofisk well data.
 
-- **Backend:** Python, FastAPI (`backend/`). Health, run list, curve inventory, curve data, and QC selection endpoints on the real Ekofisk data.
-- **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`). Pages: Overview (backend health, runs), Data (curve inventory and curves vs depth), QC selection (ranked table, DOI-noise scatter, depth tracks, saved selections), and Modelling (UDAR), which runs the UDAR_Bench 1D forward model and inversion in the browser.
+- **Backend:** Python, FastAPI (`backend/`). Health, run list, curve inventory, curve data, QC selection and 3D well path endpoints on the real Ekofisk data.
+- **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`). Pages: Overview (backend health, runs), Data (curve inventory and curves vs depth), QC selection (ranked table, DOI-noise scatter, depth tracks, saved selections), 3D well (one curve coloured along the real well path, with travel and zoom controls; open it with **3D** on a QC row or a selection chip, or bookmark `?tab=3d&run=<run>&curve=<curve>`), and Modelling (UDAR), which runs the UDAR_Bench 1D forward model and inversion in the browser.
 - **Data:** Ekofisk DLIS files in `data/`, with the reference notebook `view_resistivity_data_ekofisk.ipynb`.
 - **UDAR_Bench:** David's standalone browser example for 1D and 2.5D forward modeling and inversion (`UDAR_Bench/`). The single-file `UDAR_Bench.html` is not in the repo; build it with `node build/build.js` in `UDAR_Bench/source/` and open `UDAR_Bench/source/build/udar.html` in Chrome. The frontend uses an unchanged copy of its compute core (`frontend/src/compute/udar/`).
 
@@ -47,4 +47,5 @@ In the app, the **Inversion** tab inverts the curves chosen on the **QC selectio
 - [docs/inversion/ADR_1D5_strategy.md](docs/inversion/ADR_1D5_strategy.md): detailed forward model, inversion, and validation strategy.
 - [docs/inversion/IMPLEMENTATION_PLAN.md](docs/inversion/IMPLEMENTATION_PLAN.md): 6-week implementation roadmap with 5 workstreams.
 - [docs/inversion/RESEARCH_SUMMARY.md](docs/inversion/RESEARCH_SUMMARY.md): executive summary of inversion research findings.
+- [presentations/hackathon](presentations/hackathon/README.md): Slidev deck for the 4-minute hackathon demo.
 - [competitor UDAR inversion background](background/competitor-udar-inversion.md): summary of a related SPWLA paper and its relationship to the Ekofisk data release.

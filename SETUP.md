@@ -80,6 +80,7 @@ Run the frontend in a second terminal while the backend runs. All commands run i
 | Build | `npm run build` | `npm run build` |
 | Lint | `npm run lint` | `npm run lint` |
 | Check the UDAR core copy | `npm run check:udar` | `npm run check:udar` |
+| Check 3D colours match Plotly | `npm run check:colormap` | `npm run check:colormap` |
 | Recopy the UDAR core | `npm run sync:udar` | `npm run sync:udar` |
 
 Open http://localhost:5173. The pages are:
@@ -102,6 +103,10 @@ The frontend calls `VITE_API_URL`, default `http://localhost:5000`. To change it
 | `VITE_API_URL=http://localhost:5001 npm run dev` | `$env:VITE_API_URL = "http://localhost:5001"; npm run dev` |
 
 Backend errors appear on the page with the backend's `error` message and HTTP status.
+
+### 3D well colours
+
+The 3D well tab (three.js, React Three Fiber, drei; loaded only when the tab opens) colours curves with the Plotly Jet and RdBu scales copied into `frontend/src/components/well3d/colormap.js`. After upgrading `plotly.js-dist-min`, run `npm run check:colormap`; it exits with an error when the copied scales or their sampling differ from the installed Plotly bundle. The tab needs WebGL and shows a message when the browser has none.
 
 ### UDAR compute core
 

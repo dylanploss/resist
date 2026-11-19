@@ -16,7 +16,7 @@ function matches(row, filter) {
   return row.family === filter
 }
 
-function QcTable({ rows, checked, plotted, focus, onToggleChecked, onTogglePlotted, onShowCurve }) {
+function QcTable({ rows, checked, plotted, focus, onToggleChecked, onTogglePlotted, onShowCurve, onView3d }) {
   const [filter, setFilter] = useState('measurements')
   const [order, setOrder] = useState('grouped')
   const [hideRejected, setHideRejected] = useState(false)
@@ -87,6 +87,12 @@ function QcTable({ rows, checked, plotted, focus, onToggleChecked, onTogglePlott
                     <TableCell sx={{ fontFamily: 'monospace' }}>
                       <Link component="button" underline="hover" onClick={() => onShowCurve(row.name)}
                         sx={{ fontFamily: 'inherit', fontSize: 'inherit' }}>{row.name}</Link>
+                      {onView3d && (
+                        <Tooltip title={`View ${row.name} along the well in 3D`}>
+                          <Link component="button" underline="hover" onClick={() => onView3d(row.name)}
+                            aria-label={`View ${row.name} in 3D`} sx={{ ml: 1, fontSize: '0.75em' }}>3D</Link>
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell>{FREQ_LABEL[row.frequency_hz] ?? ''}</TableCell>
                     <TableCell>{row.spacing_in ? `${row.spacing_in} in` : ''}</TableCell>
