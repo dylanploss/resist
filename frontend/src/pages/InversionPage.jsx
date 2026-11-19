@@ -9,10 +9,11 @@ import {
 import { useApi } from '../hooks/useApi.js'
 import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
-import CurtainPlot from '../components/inversion/CurtainPlot.jsx'
+import CurtainPlot, { DEFAULT_COLOR_RANGE } from '../components/inversion/CurtainPlot.jsx'
 import InversionTracks from '../components/inversion/InversionTracks.jsx'
 
-const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false, sectionFt: '15', sliceFt: '4', windowFt: '20' }
+const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false, sectionFt: '15', sliceFt: '4', windowFt: '20',
+  rhMin: '0.1', rhMax: '1000' }
 const ACTIVE = ['queued', 'running']
 
 export function Card({ title, extra, children }) {
@@ -143,6 +144,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const [submitError, setSubmitError] = useState(null)
   const [showAll, setShowAll] = useState(false)
   const [curtainView, setCurtainView] = useState('both')
+  const [colorRange, setColorRange] = useState(DEFAULT_COLOR_RANGE.map(String))
 
   const settings = useMemo(() => settingsByRun[run] ?? (defaults.data
     ? { ...BASE_SETTINGS, mdMin: String(defaults.data.md_min_ft), mdMax: String(defaults.data.md_max_ft) } : null),
@@ -153,6 +155,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
     run, curves: qcCurves.curves, md_min_ft: Number(settings.mdMin), md_max_ft: Number(settings.mdMax),
     step_ft: settings.step, layers: settings.layers, calibration: settings.calibration, quick: settings.quick,
     slice_ft: Number(settings.sliceFt ?? 4), window_ft: Number(settings.windowFt ?? 20),
+    rh_min_ohmm: Number(settings.rhMin ?? 0.1), rh_max_ohmm: Number(settings.rhMax ?? 1000),
   } : null), [run, qcCurves.curves, settings])
   const planKey = request ? JSON.stringify(request) : null
 
@@ -249,6 +252,14 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                   value={settings.windowFt ?? '20'} slotProps={{ htmlInput: { min: 2, step: 1 } }}
                   helperText="sliding, centred on each slice"
                   onChange={(e) => update({ windowFt: e.target.value })} />
+                <TextField size="small" label="Rh min (Ω·m)" type="number"
+                  value={settings.rhMin ?? '0.1'} slotProps={{ htmlInput: { min: 0.01, step: 'any' } }}
+                  helperText="lowest Rh a layer may take"
+                  onChange={(e) => update({ rhMin: e.target.value })} />
+                <TextField size="small" label="Rh max (Ω·m)" type="number"
+                  value={settings.rhMax ?? '1000'} slotProps={{ htmlInput: { min: 0.01, step: 'any' } }}
+                  helperText="highest Rh a layer may take"
+                  onChange={(e) => update({ rhMax: e.target.value })} />
                 <TextField size="small" label="Section ± ft around well" type="number" sx={{ gridColumn: '1 / -1' }}
                   value={settings.sectionFt ?? '15'} slotProps={{ htmlInput: { min: 1, step: 1 } }}
                   helperText="TVD band shown in the cross-sections (display only)"
@@ -290,7 +301,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
           <Card title="Live curtain section" extra={`slice ${live.slice} of ${live.n_slices} · evaluation ${live.evaluation}`
             + ` · last slice misfit/noise ${live.misfit_normalised} · ±${sectionFt} ft around the well`}>
             <LinearProgress variant="determinate" value={100 * (job.progress || 0)} sx={{ mb: 1 }} />
-            <CurtainPlot result={live} halfWindowFt={sectionFt} view={curtainView} onViewChange={setCurtainView} />
+            <CurtainPlot result={live} halfWindowFt={sectionFt} view={curtainView} onViewChange={setCurtainView}
+              colorRange={colorRange} onColorRangeChange={setColorRange} />
           </Card>
         )}
         {!result && !live && (
@@ -335,7 +347,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
               </Table>
             </Card>
             <Card title="Curtain section" extra={`${result.slices?.length ?? 0} slices of ${result.slice_ft} ft, each fitted on a ${result.window_ft} ft sliding window · Rh blue conductive → red resistive · ±${sectionFt} ft around the well`}>
-              <CurtainPlot result={result} halfWindowFt={sectionFt} view={curtainView} onViewChange={setCurtainView} />
+              <CurtainPlot result={result} halfWindowFt={sectionFt} view={curtainView} onViewChange={setCurtainView}
+                colorRange={colorRange} onColorRangeChange={setColorRange} />
             </Card>
             <Card title="Measured vs modelled" extra="bold = used in the fit; faint = shown for comparison">
               <FormControlLabel control={<Switch size="small" checked={showAll}

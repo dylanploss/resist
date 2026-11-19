@@ -20,6 +20,8 @@ class InversionRequest(BaseModel):
     quick: bool = False
     slice_ft: float = Field(service.DEFAULT_SLICE_FT, ge=1.0, le=50.0)
     window_ft: float = Field(service.DEFAULT_WINDOW_FT, ge=2.0, le=200.0)
+    rh_min_ohmm: float = Field(0.1, gt=0.0, le=10000.0)
+    rh_max_ohmm: float = Field(1000.0, gt=0.0, le=10000.0)
 
     @model_validator(mode="after")
     def check_interval(self):
@@ -29,6 +31,8 @@ class InversionRequest(BaseModel):
             raise ValueError(f"interval longer than {service.MAX_INTERVAL_FT:.0f} ft")
         if self.window_ft < self.slice_ft:
             raise ValueError("window_ft must be at least slice_ft")
+        if self.rh_max_ohmm <= self.rh_min_ohmm:
+            raise ValueError("rh_max_ohmm must be greater than rh_min_ohmm")
         return self
 
 

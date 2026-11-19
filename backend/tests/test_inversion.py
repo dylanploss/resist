@@ -109,6 +109,14 @@ class PlanTests(unittest.TestCase):
         image = np.array([[10.0, 10.0, 10.0, 10.0], [5.0, 20.0, np.nan, -999.25]])
         np.testing.assert_allclose(azimuthal_average(image), [10.0, 8.0])
 
+    def test_rh_bounds_follow_config(self):
+        from backend.inversion.invert import Layout
+
+        lay = Layout(FitConfig(n_layers=2, rh_min=2.0, rh_max=200.0), 1, 0.0)
+        lo, hi = lay.bounds(-10, 10)
+        np.testing.assert_allclose(lo[1:3], np.log10([2.0, 2.0]))
+        np.testing.assert_allclose(hi[1:3], np.log10([200.0, 200.0]))
+
     def test_slices_tile_the_interval(self):
         from backend.inversion.service import slice_centres
 

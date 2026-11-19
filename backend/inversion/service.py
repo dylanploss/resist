@@ -260,6 +260,7 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
 
     t0 = time.time()
     cfg = FitConfig(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal,
+                    rh_min=request.get("rh_min_ohmm", 0.1), rh_max=request.get("rh_max_ohmm", 1000.0),
                     max_nfev=nfev)
     pred = np.full(data.obs.shape, np.nan)
     owner = np.argmin(np.abs(data.md_ft[:, None] - centres[None, :]), axis=1)
