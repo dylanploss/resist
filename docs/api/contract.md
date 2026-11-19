@@ -94,8 +94,18 @@ Details:
   - `doi_m` is an estimated radial reach in metres, aligned with `md_ft`: one value per sample, or for azimuthal resistivity images (`image` true, ZR) a row of one value per bin, computed from that bin's resistivity so the reach grows only on the resistive (red) side. Each value is the skin depth `503.3·sqrt(rho/f)` in the local resistivity, softly capped at 3 transmitter-receiver spacings (`1/doi² = 1/skin² + 1/cap²`), times 1.5 for attenuation. `rho` is the curve itself for AR/ZR, else the run's deepest AR resistivity with at least 50 % valid samples. Values are clipped to the same 2nd–98th percentile as the colour scale (so a redder bin never reads shallower); missing samples are interpolated and missing bins take their ring's mean. `doi_source` names that resistivity curve. Both are null for non-ADR channels. An approximation for display, not an inversion result.
 - `/runs/{run}/selection` saves `backend/output/selections/{run}.json` (override with `RESIST_SELECTION_DIR`) with `curves`, `auto_selected`, `added`, `removed` and `overridden_rejections`.
 - Inversion request: `{"run", "curves": [QC-selected names], "md_min_ft", "md_max_ft", "step_ft": 4, "layers": 3, "calibration": true, "quick": false}`. The interval is at most 1500 ft and 250 stations.
-- The inversion plan maps the QC selection onto the 1.5D forward model (`backend/inversion/service.py`). `AR` curves are used; a `C` curve uses the vendor-corrected data for that channel. Phase has weight 1. With `calibration` on, 2 MHz attenuation has weight 0.5 and the Z-20 resistivity-dependent correction, and 500/125 kHz attenuation has weight 0.25. `ZR`/`ZG` and conventional curves are listed under `ignored` with a reason.
-- Jobs run one at a time in a background thread (status `queued` → `running` → `done` or `error`). `result` holds `md_ft`, `tvd_ft`, `inclination_deg`, `curves` (per channel: `obs`, `pred`, `theory`, `used`, `weight`, `rms_percent`, `mean_residual_percent`), `model` (`layers` with `rh`, `rv`, `top_tvd_ft`, `bottom_tvd_ft`; `dip_deg`; `dip_azimuth_deg`; `boundary_tvd_ft` per station), and `rms_percent_used`. Jobs are kept in memory only.
+- The inversion plan maps the QC selection onto the 1.5D forward model (`backend/inversion/service.py`). Each `used` entry has `curve`, `label`, `kind` (`avg`, `top`, `bottom`, `geosignal`), `source`, `measurement`, `weight` and `correction`.
+  - `AR` curves are used as averages; a `C` curve uses the vendor-corrected data.
+  - A `ZR` image at 16/32/48 in contributes its top and bottom bins (`ZR..T`/`ZR..B` curves, or image bins 0/16). `ZR..T`/`ZR..B` curves can also be selected directly.
+  - A `ZG` image contributes its top bin (bin 0).
+  - Phase has weight 1. With `calibration` on, 2 MHz attenuation (averaged and top/bottom) has weight 0.5 and the Z-20 resistivity-dependent correction, and 500/125 kHz attenuation has weight 0.25.
+  - Left/right bins, `ZR` 50/66/82 in images and conventional curves are listed under `ignored` with a reason.
+  - `azimuthal` is true when directional channels are used.
+- Jobs run one at a time in a background thread (status `queued` → `running` → `done` or `error`). Jobs are kept in memory only. `result` holds:
+  - `md_ft`, `tvd_ft` and `inclination_deg`.
+  - `curves`: one entry per channel with `label`, `group`, `kind`, `unit` (`ohm.m`, `deg`, `dB`), `source`, `obs`, `pred`, `used`, `weight`, `sigma`, `rms`, `rms_percent` (resistivities), `rms_normalised` and `mean_residual_percent`.
+  - `model`: `layers` with `rh`, `rv`, `top_tvd_ft` and `bottom_tvd_ft`; `dip_deg`; `dip_azimuth_deg`; and `boundary_tvd_ft` per station.
+  - `rms_percent_used` and `misfit_normalised` (RMS of residual/σ over the used channels).
 
 Errors use `{"error": "<message>"}`:
 

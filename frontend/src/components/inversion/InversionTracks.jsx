@@ -13,7 +13,7 @@ const KIND = {
 function InversionTracks({ result, showAll }) {
   const { data, layout } = useMemo(() => {
     const groups = {}
-    for (const c of result.curves) (groups[c.group] ??= []).push(c)
+    for (const c of result.curves) (groups[c.group ?? c.label.slice(0, -1)] ??= []).push(c)
     const names = Object.keys(groups).filter((g) => showAll || groups[g].some((c) => c.used))
     const n = Math.max(1, names.length)
     const gap = 0.015
@@ -31,8 +31,9 @@ function InversionTracks({ result, showAll }) {
         side: 'top', tickfont: { size: 9 }, showgrid: true, zeroline: unit !== 'ohm.m',
       }
       for (const c of curves) {
-        kinds.add(c.kind)
-        const style = KIND[c.kind]
+        const kind = KIND[c.kind] ? c.kind : 'avg'
+        kinds.add(kind)
+        const style = KIND[kind]
         const dash = c.measurement === 'phase' ? 'solid' : 'dash'
         const opacity = c.used ? 1 : 0.3
         const tag = `${c.label}${c.used ? ` w=${c.weight}` : ' (not used)'}`

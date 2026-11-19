@@ -6,13 +6,48 @@ The physics choices in [ADR_1D5_strategy.md](ADR_1D5_strategy.md) still hold. Th
 
 ## Using it from the app
 
-1. **QC selection** tab: pick the run and tick the curves. Only `AR` phase/attenuation curves (raw or `C`) enter the
-   1.5D model; `ZR`/`ZG` curves are listed as not used, with the averaged twin to pick instead where one exists.
+1. **QC selection** tab: pick the run and tick the curves. `AR` curves give averaged data. A `ZR` image at 16/32/48 in
+   contributes its **top and bottom bins**, and a `ZG` geosignal its **top bin**. These directional channels tell the
+   inversion whether a boundary is above or below the well. `ZR` 50/66/82 in long-spacing images are not modelled yet,
+   because their antenna layout is unconfirmed.
 2. Press **Invert this selection →** (or open the **Inversion** tab). The tab uses the live QC selection, falling back
    to the saved selection and then the QC auto-pick. It shows each curve's weight and whether the Z-20 correction applies.
 3. Set the MD interval (Z-20 defaults to 20100–20500 ft), station step, layer count, and calibration, then **Run inversion**.
    A 400 ft interval at 4 ft steps takes about 3 minutes. Results show the layer table, a curtain section, measured vs
    modelled tracks, and misfit per curve.
+
+## Directional data (ZR top/bottom, ZG top)
+
+The forward model (`ADRForward(azimuthal=True)`) evaluates the 45° tilted receivers at tool-face 0 (top) and
+180° (bottom):
+
+- **`ZR<f><s>{P,A}{T,B}`.** Compensated top/bottom-bin apparent resistivity. The uphole transmitter at the top bin is
+  paired with the downhole transmitter at the bottom bin (mirror pairing), which keeps the up/down sensitivity.
+- **`ZG<f>112{P,A}T`.** Top-bin geosignal: phase(top) − phase(bottom) in degrees and 20·log10|V_bottom/V_top| in dB,
+  for a transmitter 112 in uphole of a tilted receiver at the tool midpoint.
+
+Conventions checked against the delivered data:
+
+| Check | Evidence |
+|---|---|
+| Top = image bin 0, bottom = bin 16 | The delivered `ZR..T`/`ZR..B` curves equal image bins 31–1 and 15–16 (Z-20) |
+| Bottom bin reads a resistive bed below | Z-20 at 20350 ft: ZRH16P top 7.4, bottom 52.7 Ω·m as the well approaches the resistive layer below |
+| ZG sign | ZG top phase/attenuation correlate +0.52 to +0.66 with log(ZR bottom/top) on Z-19 and Z-20. ZGL112A correlates < 0.16, so its weight is 0.25 |
+
+Physics checks (tests): a homogeneous medium gives equal bins and zero geosignal, and a mirrored model swaps top/bottom
+and flips the geosignal sign exactly. Synthetic test on the real Z-20 trajectory, using only stations *above* a
+boundary 6 ft below the well:
+
+- AR-only inversion put the boundary on the wrong side, with dip at its bound.
+- With ZR top/bottom and ZG top, the multi-start inversion recovered it at +5.9 ft, with Rh 8/35 (true 8/40) and dip
+  0.41° (true 0.5°).
+
+Single bins and geosignals are weighted by their own noise. That noise is estimated in each window from
+sample-to-sample differences, with floors of 2%, 0.5° and 0.05 dB. The Z-20 2 MHz attenuation correction is also
+applied to the top/bottom attenuation bins.
+
+**Cost:** the directional forward is about 13 ms per station. A 400 ft window at 4 ft steps took about 10 min in
+Quick mode with 8 channels, so use 8 ft steps for quick looks.
 
 ## What exists now
 
