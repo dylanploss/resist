@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
-import { Box, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
+import { Box, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material'
 import PlotlyChart from '../PlotlyChart.jsx'
 
 // Low to high resistivity (log scale, 1 to 300 ohm-m).
 const STOPS = [[0, [69, 117, 180]], [0.35, [145, 191, 219]], [0.55, [254, 224, 144]], [0.75, [252, 141, 89]], [1, [215, 48, 39]]]
-const LOG_MAX = Math.log10(300)
 const COLORSCALE = STOPS.map(([s, c]) => [s, `rgb(${c.join(',')})`])
-const TICKS = [1, 3, 10, 30, 100, 300]
+const TICKS = [0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000, 3000]
+export const DEFAULT_COLOR_RANGE = [1, 300]
 
 function interp(xs, ys, x) {
   const pts = xs.map((v, i) => [v, ys[i]]).filter(([a, b]) => a != null && b != null)
@@ -71,10 +71,12 @@ function buildGrid(result, h) {
   return { xs, ys, own, mean, spread, lo, hi }
 }
 
-function heatmap(grid, z, title, extra) {
+function heatmap(grid, z, title, extra, [cmin, cmax]) {
+  const ticks = TICKS.filter((t) => t >= cmin && t <= cmax)
   return {
-    type: 'heatmap', x: grid.xs, y: grid.ys, z, zmin: 0, zmax: LOG_MAX, colorscale: COLORSCALE, name: title,
-    colorbar: { title: { text: 'Rh Ω·m', side: 'right' }, tickvals: TICKS.map(Math.log10), ticktext: TICKS.map(String),
+    type: 'heatmap', x: grid.xs, y: grid.ys, z, zmin: Math.log10(cmin), zmax: Math.log10(cmax), colorscale: COLORSCALE,
+    name: title,
+    colorbar: { title: { text: 'Rh Ω·m', side: 'right' }, tickvals: ticks.map(Math.log10), ticktext: ticks.map(String),
       thickness: 12, len: 0.9 },
     ...extra,
   }
@@ -122,8 +124,12 @@ function layoutFor(grid, height, title) {
 // Curtain section along the well. Every slice is its own 1.5D model fitted on a sliding data window centred on it:
 // "Slices" colours each slice by its own model; "Mean" averages log Rh over every model whose data window covers
 // that MD (all runs that saw it), so it fills in as slices finish.
-function CurtainPlot({ result, halfWindowFt = 15, height = 340, view = 'both', onViewChange }) {
+function CurtainPlot({ result, halfWindowFt = 15, height = 340, view = 'both', onViewChange,
+  colorRange = DEFAULT_COLOR_RANGE, onColorRangeChange }) {
   const h = Math.max(1, Number(halfWindowFt) || 15)
+  const cmin = Number(colorRange[0]) > 0 ? Number(colorRange[0]) : DEFAULT_COLOR_RANGE[0]
+  const cmax = Number(colorRange[1]) > cmin ? Number(colorRange[1]) : Math.max(cmin * 10, DEFAULT_COLOR_RANGE[1])
+  const range = useMemo(() => [cmin, cmax], [cmin, cmax])
   const grid = useMemo(() => (result?.slices?.length ? buildGrid(result, h) : null), [result, h])
   const plots = useMemo(() => {
     if (!grid) return []
@@ -134,7 +140,7 @@ function CurtainPlot({ result, halfWindowFt = 15, height = 340, view = 'both', o
         data: [heatmap(grid, grid.own, 'Slices', {
           hovertemplate: 'Rh %{customdata:.1f} Ω·m<br>TVD %{y:.1f} ft<extra>%{x:.1f} ft MD · slice model</extra>',
           customdata: grid.own.map((row) => row.map((v) => (v == null ? null : 10 ** v))),
-        }), ...overlays(result, h, true)],
+        }, range), ...overlays(result, h, true)],
         layout: layoutFor(grid, height, `Slices: one model per ${result.slice_ft} ft slice (data window ${result.window_ft} ft)`),
       })
     }
@@ -146,25 +152,38 @@ function CurtainPlot({ result, halfWindowFt = 15, height = 340, view = 'both', o
             : [10 ** v, ...(grid.spread[r][c] ?? [null, null])]))),
           hovertemplate: 'mean Rh %{customdata[0]:.1f} Ω·m (±%{customdata[1]}%, %{customdata[2]} runs)'
             + '<br>TVD %{y:.1f} ft<extra>%{x:.1f} ft MD</extra>',
-        }), ...overlays(result, h, false)],
+        }, range), ...overlays(result, h, false)],
         layout: layoutFor(grid, height, 'Mean of all runs whose data window covers each MD (geometric mean of Rh)'),
       })
     }
     return out
-  }, [grid, result, h, height, view])
+  }, [grid, result, h, height, view, range])
 
   if (!result?.slices?.length) {
     return <Typography variant="body2" color="text.secondary">Waiting for the first slice…</Typography>
   }
   return (
     <Box>
-      {onViewChange && (
-        <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, v) => v && onViewChange(v)} sx={{ mb: 1 }}>
-          <ToggleButton value="slices">Slices</ToggleButton>
-          <ToggleButton value="mean">Mean</ToggleButton>
-          <ToggleButton value="both">Both</ToggleButton>
-        </ToggleButtonGroup>
-      )}
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
+        {onViewChange && (
+          <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, v) => v && onViewChange(v)}>
+            <ToggleButton value="slices">Slices</ToggleButton>
+            <ToggleButton value="mean">Mean</ToggleButton>
+            <ToggleButton value="both">Both</ToggleButton>
+          </ToggleButtonGroup>
+        )}
+        {onColorRangeChange && (
+          <>
+            <TextField size="small" type="number" label="Colour min Ω·m" sx={{ width: 130 }} value={colorRange[0]}
+              slotProps={{ htmlInput: { min: 0.01, step: 'any' } }}
+              onChange={(e) => onColorRangeChange([e.target.value, colorRange[1]])} />
+            <TextField size="small" type="number" label="Colour max Ω·m" sx={{ width: 130 }} value={colorRange[1]}
+              slotProps={{ htmlInput: { min: 0.01, step: 'any' } }}
+              onChange={(e) => onColorRangeChange([colorRange[0], e.target.value])} />
+            <Typography variant="caption" color="text.secondary">display only, log scale</Typography>
+          </>
+        )}
+      </Box>
       {plots.map((p) => <PlotlyChart key={p.key} data={p.data} layout={p.layout} />)}
     </Box>
   )

@@ -158,6 +158,8 @@ class FitConfig:
     azimuthal: bool = False            # forward model with directional ZR top/bottom and ZG channels
     fit_cross_dip: bool = False        # second dip angle across the well, so the dip azimuth is free (3D facets)
     dip_limit_deg: float = 15.0        # bound on the along- and cross-well dip angles
+    rh_min: float = 0.1                # ohm-m bounds on every layer's Rh
+    rh_max: float = 1000.0
     forward_options: dict | None = None  # extra ADRForward arguments, e.g. zr_sides for left/right quadrants
     curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
     level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
@@ -209,8 +211,9 @@ class Layout:
 
     def bounds(self, tvd_lo, tvd_hi):
         k = self.cfg.n_layers
-        lo = [tvd_lo] + [0.5] * (k - 2) + [-1.0] * k + [0.0] * self.n_aniso
-        hi = [tvd_hi] + [60.0] * (k - 2) + [3.0] * k + [1.0] * self.n_aniso
+        lrh_lo, lrh_hi = np.log10(self.cfg.rh_min), np.log10(self.cfg.rh_max)
+        lo = [tvd_lo] + [0.5] * (k - 2) + [lrh_lo] * k + [0.0] * self.n_aniso
+        hi = [tvd_hi] + [60.0] * (k - 2) + [lrh_hi] * k + [1.0] * self.n_aniso
         if k == 1:
             lo, hi = lo[1:], hi[1:]
         lim = self.cfg.dip_limit_deg
