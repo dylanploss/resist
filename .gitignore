@@ -21,3 +21,4 @@ Thumbs.db
 resist_repo/
 *.html
 .env
+!frontend/index.html
