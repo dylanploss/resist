@@ -67,3 +67,14 @@ Rules:
 | POST | `/qc/select` | QC selection JSON above |
 
 Errors use `{"error": "<message>"}` with HTTP 4xx or 5xx.
+
+## QC visualization endpoints (Dylan, `backend/qc/api.py`)
+
+`{run}` is the DLIS file stem, for example `2_4-Z-6_16954-20950ft_RES_GEOSIGNAL`. Errors use FastAPI's `{"detail": "<message>"}`.
+
+| Method | Path | Response |
+|--------|------|----------|
+| GET | `/runs` | `{"runs": [{"run", "label"}]}` |
+| GET | `/runs/{run}/qc?n_select=8` | QC selection JSON above for that run |
+| GET | `/runs/{run}/curves/{name}?start_ft=&end_ft=&max_points=1500` | `{curve, unit, family, image, stride, md_ft, values}`; every `stride`th sample, images as 32 bins × depth |
+| POST | `/runs/{run}/selection` | Body `{curves, n_select}`; saves `backend/output/selections/{run}.json` with `added`, `removed`, `overridden_rejections` |

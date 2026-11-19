@@ -25,7 +25,7 @@ function App() {
           <Typography variant="h6">Resist QC and Inversion</Typography>
         </Toolbar>
       </AppBar>
-      <Container sx={{ py: 3 }}>
+      <Container maxWidth="xl" sx={{ py: 3 }}>
         {health.state === 'loading' && <Alert severity="info">Checking backend…</Alert>}
         {health.state === 'ok' && <Alert severity="success">Backend status: {health.status}</Alert>}
         {health.state === 'error' && (
