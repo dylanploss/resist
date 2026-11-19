@@ -3,6 +3,7 @@ import {
   Alert, Box, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Typography,
 } from '@mui/material'
 import { api, compareGroup, runPath } from '../api.js'
+import { useSelection } from '../selection.js'
 import CurveTrackPlot from './CurveTrackPlot.jsx'
 import DoiNoiseScatter from './DoiNoiseScatter.jsx'
 import QcTable from './QcTable.jsx'
@@ -39,6 +40,8 @@ function QcSelection({ run }) {
   const [focus, setFocus] = useState(null)
   const [save, setSave] = useState({ saving: false, saved: null, error: null })
   const qcKey = `${run}|${nSelect}`
+  const selection = useSelection()
+  const view3d = selection ? (name) => selection.openWell3d(run, name) : undefined
 
   useEffect(() => {
     if (!run) return undefined
@@ -111,14 +114,14 @@ function QcSelection({ run }) {
           <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'minmax(0, 3fr) minmax(0, 2fr)' }, mb: 3 }}>
             <QcTable rows={rows} checked={checked} plotted={plotted} focus={focus?.name}
               onToggleChecked={(name) => setChecked((list) => toggle(list, name))}
-              onTogglePlotted={togglePlotted} onShowCurve={showCurve} />
+              onTogglePlotted={togglePlotted} onShowCurve={showCurve} onView3d={view3d} />
             <Box>
               <DoiNoiseScatter rows={rows} checked={checked} focus={focus?.name}
                 onShowCurve={showCurve} onShowCurves={showCurves} />
               <SelectionSummary rows={rows} checked={checked} saving={save.saving} saved={save.saved}
                 onRemove={(name) => setChecked((list) => list.filter((n) => n !== name))}
                 onReset={() => setChecked(qc.body.selected)} onSave={saveSelection}
-                onPlot={() => showCurves(checked)} />
+                onPlot={() => showCurves(checked)} onView3d={view3d} />
             </Box>
           </Box>
           <Typography variant="subtitle2" gutterBottom>Curves vs measured depth</Typography>

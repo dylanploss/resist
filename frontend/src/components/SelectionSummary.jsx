@@ -1,7 +1,7 @@
 import { Alert, Box, Button, Chip, Stack, Typography } from '@mui/material'
 import { FREQ_LABEL, STATUS } from '../api.js'
 
-function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, saving, saved }) {
+function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, onView3d, saving, saved }) {
   const byName = Object.fromEntries(rows.map((r) => [r.name, r]))
   const chosen = checked.map((n) => byName[n]).filter(Boolean)
   const count = (test) => chosen.filter(test).length
@@ -27,6 +27,7 @@ function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, sa
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1.5 }}>
         {chosen.map((r) => (
           <Chip key={r.name} size="small" label={r.name} onDelete={() => onRemove(r.name)}
+            onClick={onView3d && (() => onView3d(r.name))} title={onView3d && `View ${r.name} in 3D`}
             sx={{ fontFamily: 'monospace', borderColor: STATUS[r.status].color }} variant="outlined" />
         ))}
       </Box>
