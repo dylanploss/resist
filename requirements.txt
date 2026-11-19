@@ -1,0 +1,6 @@
+# Direct dependencies for view_release_data.ipynb
+dlisio
+numpy
+pandas
+matplotlib
+ipywidgets
