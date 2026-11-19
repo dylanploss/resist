@@ -1,7 +1,7 @@
 ---
 title: 3D well view of one QC curve
 slug: well-3d-view
-status: implemented on branch (2026-11-19: option A three.js + R3F v9 + drei; steps 1-9 done, step 10 ship pending)
+status: implemented on branch (2026-11-19: option A three.js + R3F v9 + drei; steps 1-9 done, step 10 ship pending); change request 2026-11-19 12:45: tube radius from QC depth of investigation (step 11)
 owner: Ove
 created: 2026-11-19
 traceability: false
@@ -13,8 +13,10 @@ branch: feature/well-3d-view (from main 7fbc8ca)
 ## Goal
 
 Add a new **3D well** tab that shows one curve picked from the QC selection tab. The curve is drawn
-along the real well path in 3D, using the same colours as the QC tab. You can travel down the well,
-step forward and back, and zoom in and out.
+along the real well path in 3D, using the same colours as the QC tab. The tube radius shows the
+curve's depth of investigation (DOI) from the QC tab, so a deep-reading curve draws a thicker tube
+than a shallow one and the view shows the volume around the well that the curve actually senses.
+You can travel down the well, step forward and back, and zoom in and out.
 
 ## What the data gives us (checked on the running backend)
 
@@ -82,11 +84,24 @@ travel-down-the-well camera and a coloured tube, and that can later wrap the 32-
    **Reset view** fits the whole well. **Follow** keeps the camera behind the travel point, looking
    down the well; **Free** allows orbiting.
 7. Keyboard: ↑/↓ move forward/back, +/− zoom, space play/pause.
-8. Vertical exaggeration and tube radius can be adjusted (defaults 1× and 3 m) so thin or flat
-   sections stay visible.
+8. Vertical exaggeration can be adjusted (default 1×) so thin or flat sections stay visible.
+   The tube radius comes from the curve's QC DOI (see criterion 11), not a fixed 3 m default.
 9. Null values are shown as grey gaps, not as zero.
 10. `npm run lint`, `npm run build` and `npm run check:udar` pass, and `pytest backend/tests` passes,
     including the new endpoint tests.
+11. **DOI-scaled tube (change request, 2026-11-19).**
+    - The tube radius uses the same DOI that the QC tab shows for the curve: `doi_index` and
+      `doi_tier` from `backend/qc/metrics.doi_index`, for the same spacing, frequency and
+      measurement.
+    - A deeper-reading curve draws a proportionally thicker tube. Switching the curve changes the
+      radius.
+    - The panel shows the DOI index, its tier (shallow, medium, deep) and the radius in metres.
+    - **Constraint:** `doi_index` is a relative ordering heuristic, where 1.0 is the 16 in 2 MHz
+      phase curve. `metrics.py` says it is *"not a reach in inches"*. The conversion from index to
+      metres must be one named constant, and the UI must label the radius as an estimate. Do not
+      present it as a measured reach. Where the constant comes from must be recorded in the
+      implementation notes.
+    - Curves without a DOI (non-ADR channels) fall back to a fixed radius, and the UI says so.
 
 ## Approach
 
@@ -145,7 +160,15 @@ travel-down-the-well camera and a coloured tube, and that can later wrap the 32-
 9. **Phase 2 (optional): image wrap.**
    - `DataTexture` from the 32 bins. Verify that the Top/Bottom bins sit where the QC heatmap puts
      them.
-10. **Ship.**
+10. **DOI-scaled tube (change request).**
+    - Return `doi_index` and `doi_tier` in the `well3d` response, reusing `metrics.doi_index`.
+    - Derive the radius in `Well3dPage.jsx` from the DOI, and keep the depth ticks, the marker
+      ring and the follow distance proportional to it.
+    - Update `docs/api/contract.md` and the implementation notes.
+    - Verify: `pytest backend/tests` includes a test that a deeper curve returns a larger
+      `doi_index`. A browser check confirms that a deep ZG curve draws a visibly thicker tube than
+      a shallow AR curve.
+11. **Ship.**
     - Commit per step (conventional messages and the Co-authored-by trailer).
     - Push `feature/well-3d-view` as `OveQ` and open a draft PR. Merge after your review.
 
