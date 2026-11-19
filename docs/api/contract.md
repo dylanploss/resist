@@ -60,10 +60,27 @@ Rules:
 
 ## Endpoints (Ove)
 
-| Method | Path | Response |
-|--------|------|----------|
-| GET | `/health` | `{"status": "ok"}` |
-| GET | `/curves` | `{"curves": [<curve metadata rows>]}` |
-| POST | `/qc/select` | QC selection JSON above |
+Implemented in `backend/app.py`. A run id is the DLIS file name without `.dlis`, for example `2_4-Z-6_16954-20950ft_RES_GEOSIGNAL`. Runs are read from `DATA_DIR` (default `<repo>/data`). A run is parsed on first use and cached for the life of the process.
 
-Errors use `{"error": "<message>"}` with HTTP 4xx or 5xx.
+| Method | Path | Request | Response |
+|--------|------|---------|----------|
+| GET | `/health` | none | `{"status": "ok"}` |
+| GET | `/runs` | none | `{"runs": [{"run", "file", "well", "depth_min_m", "depth_max_m"}]}` |
+| GET | `/curves` | query `run` (required) | `{"run", "well", "curves": [<curve metadata rows>]}` |
+| GET | `/curves/{run}/data` | query `curves=A,B` (required) | `{"run", "well", "depth_m": [..], "curves": {"A": {"unit", "bins", "values": [..]}}}` |
+| POST | `/qc/select` | `{"run": "<id>", "n_select": 8}` | QC selection JSON above |
+
+Details:
+- `/runs` reads only DLIS headers. `well` and the depth range are null if the header is unreadable, and the entry then has an `error` field.
+- `/curves` rows contain the four metadata columns above plus the loader columns `well`, `run`, `depth_ref`, `sample_count`, `bins`, `depth_min_m`, `depth_max_m`, `valid_fraction`, `nonpositive_count`, and the mnemonic fields from `measurement_metadata`: `family` (`AR`, `ZR`, `ZG` or `conventional`), `frequency_hz`, `spacing_in`, `measurement`, `suffix`, `geometry_status`. Mnemonic fields are null for conventional curves.
+- `/curves/{run}/data` returns one value per depth for scalar curves (`bins` 1) and a list of 32 bin values per depth for image curves (`bins` 32). Null-sentinel and non-finite samples are `null`.
+- `/qc/select`: `n_select` defaults to 8 and must be within 5 to 10.
+
+Errors use `{"error": "<message>"}`:
+
+| Status | When |
+|--------|------|
+| 400 | Missing `run` or `curves` parameter, unknown curve name, invalid body, `n_select` outside 5 to 10 |
+| 404 | Unknown run id |
+| 500 | A DLIS file fails to load or QC fails unexpectedly |
+| 503 | `DATA_DIR` missing or holding no `.dlis` files |
