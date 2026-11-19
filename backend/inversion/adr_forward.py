@@ -86,6 +86,12 @@ class LayerModel:
 
 FREQ_LETTER = {2e6: "H", 5e5: "M", 1.25e5: "L"}
 DEFAULT_GEOSIGNALS = (Channel("ZGM112", 5e5, 112), Channel("ZGL112", 1.25e5, 112))
+# Long-spacing (LS) azimuthal images ZR{M,L}{50,66,82}. Their antenna layout is NOT confirmed. Guess: 50/66/82 in
+# = 16/32/48 in + 34 in, i.e. the uphole 16/32/48 in transmitters firing to a third tilted receiver 34 in downhole of
+# the tool midpoint, measured uncompensated against the near main receiver (+receiver_sep/2).
+LS_RECEIVER_IN = 34.0
+DEFAULT_LONG_SPACINGS = tuple(Channel(f"ZR{FREQ_LETTER[f]}{s}", f, s)
+                              for f in (5e5, 1.25e5) for s in (50, 66, 82))
 
 
 @dataclass
@@ -93,6 +99,8 @@ class ADRForward:
     """Averaged (``AR``) and, with ``azimuthal=True``, directional channels:
 
     * ``ZR<f><s>{P,A}{T,B}``: compensated top/bottom-bin apparent resistivities of the tilted receiver pair.
+    * ``ZR{M,L}{50,66,82}{P,A}{T,B}``: long-spacing top/bottom bins on a GUESSED geometry (see ``LS_RECEIVER_IN``):
+      uncompensated, so tool/borehole effects are not cancelled; use with reduced weight.
     * ``ZG<f>112{P,A}T``: top-bin geosignal for one transmitter 112 in uphole of a tilted receiver at the tool
       midpoint: phase(top) - phase(bottom) in deg and 20 log10|V_bottom / V_top| in dB. These signs match the
       delivered data: on Z-19 and Z-20 both rise when the bottom bin reads more resistive (r = +0.52 to +0.66).
@@ -107,6 +115,8 @@ class ADRForward:
     receiver_sep_in: float = 8.0
     azimuthal: bool = False
     geosignals: tuple = DEFAULT_GEOSIGNALS
+    long_spacings: tuple = DEFAULT_LONG_SPACINGS
+    ls_receiver_in: float = LS_RECEIVER_IN
     tilt_deg: float = 45.0
     polarity: int | None = None
     rho_grid: np.ndarray = field(default_factory=lambda: np.logspace(-1, 3.3, 260))
@@ -119,6 +129,7 @@ class ADRForward:
         self.rx_offsets = np.array([-half, half])
         self.tx_offsets = np.concatenate([-self.spacings, self.spacings]) * INCH
         self._tables = None
+        self._ls_tables = None
 
     # ------------------------------------------------------------------ labels
     def ar_labels(self):
@@ -130,6 +141,9 @@ class ADRForward:
             for m in "PA":
                 for c in self.channels:
                     labels += [f"ZR{c.name[2:]}{m}T", f"ZR{c.name[2:]}{m}B"]
+            for m in "PA":
+                for c in self.long_spacings:
+                    labels += [f"{c.name}{m}T", f"{c.name}{m}B"]
             for g in self.geosignals:
                 labels += [g.name + "PT", g.name + "AT"]
         return labels
@@ -175,9 +189,24 @@ class ADRForward:
         z = bed normal, down)."""
         c, s = np.cos(np.deg2rad(self.tilt_deg)), np.sin(np.deg2rad(self.tilt_deg))
         look = {"T": polarity * h_f, "B": -polarity * h_f}
-        rx_off = list(self.rx_offsets) + ([0.0] if self.geosignals else [])
+        rx_off = list(self.rx_offsets)
+        gs_rx = ls_rx = None
+        if self.geosignals:
+            gs_rx = len(rx_off); rx_off.append(0.0)
+        if self.long_spacings:
+            ls_rx = len(rx_off); rx_off.append(self.ls_receiver_in * INCH)
         rx = [(o, k) for o in rx_off for k in "TB"]
-        tx_off = np.concatenate([self.tx_offsets, [-g.spacing_in * INCH for g in self.geosignals]])
+        ns = len(self.spacings)
+        extra, ls_tx = [], []
+        base = 2 * ns + len(self.geosignals)
+        for ch in self.long_spacings:
+            d = ch.spacing_in - self.ls_receiver_in      # transmitter distance uphole of the tool midpoint
+            hit = np.flatnonzero(np.isclose(self.spacings, d))
+            if hit.size:
+                ls_tx.append(int(hit[0]))                                         # existing uphole transmitter
+            else:
+                ls_tx.append(base + len(extra)); extra.append(-d * INCH)
+        tx_off = np.concatenate([self.tx_offsets, [-g.spacing_in * INCH for g in self.geosignals], extra])
 
         def points(offsets, dirs):
             offsets = np.asarray(offsets, float)
@@ -191,8 +220,7 @@ class ADRForward:
                            msrc=True, mrec=True, verb=0, htarg=HTARG)
         v = np.conj(np.asarray(v).reshape(len(self.freqs), len(rx), len(tx_off)))
         R = {(i, k): 2 * i + (0 if k == "T" else 1) for i in range(len(rx_off)) for k in "TB"}
-        ns = len(self.spacings)
-        out = {k: ([], []) for k in ("avg", "T", "B")}
+        out = {k: ([], []) for k in ("avg", "T", "B", "LT", "LB")}
 
         def comp(up, dn):
             return (-0.5 * (np.angle(up, deg=True) + np.angle(dn, deg=True)),
@@ -209,11 +237,16 @@ class ADRForward:
                 out[key][0].append(p); out[key][1].append(a)
             p, a = comp(avg(0, up_t) / avg(1, up_t), avg(1, dn_t) / avg(0, dn_t))
             out["avg"][0].append(p); out["avg"][1].append(a)
+        for ch, tj in zip(self.long_spacings, ls_tx):
+            fi = int(np.searchsorted(self.freqs, ch.frequency_hz))
+            for key, k in (("LT", "T"), ("LB", "B")):
+                ratio = v[fi, R[(1, k)], tj] / v[fi, R[(ls_rx, k)], tj]           # near main Rx / LS Rx
+                out[key][0].append(-np.angle(ratio, deg=True)); out[key][1].append(20 * np.log10(abs(ratio)))
         gs = []
         for j, g in enumerate(self.geosignals):
             fi = int(np.searchsorted(self.freqs, g.frequency_hz))
             tj = 2 * ns + j
-            vt, vb = v[fi, R[(2, "T")], tj], v[fi, R[(2, "B")], tj]
+            vt, vb = v[fi, R[(gs_rx, "T")], tj], v[fi, R[(gs_rx, "B")], tj]
             gs += [np.angle(vt / vb, deg=True), 20 * np.log10(abs(vb / vt))]
         return {k: (np.array(p), np.array(a)) for k, (p, a) in out.items()}, np.array(gs)
 
@@ -235,16 +268,28 @@ class ADRForward:
             self._tables = (np.array(ph), np.array(at))   # (n_rho, n_chan), both decrease with rho
         return self._tables
 
-    def apparent(self, phase, atten):
+    def apparent(self, phase, atten, tables=None):
         """Phase/attenuation arrays (..., n_chan) to (Rp, Ra) in ohm-m via the whole-space transform."""
-        ph_t, at_t = self.tables()
+        ph_t, at_t = tables if tables is not None else self.tables()
         lr = np.log10(self.rho_grid)
         rp = np.empty_like(phase); ra = np.empty_like(atten)
-        for k in range(len(self.channels)):
-            rp[..., k] = 10 ** np.interp(-phase[..., k], -ph_t[:, k], lr)
-            a = np.minimum.accumulate(at_t[:, k])            # enforce monotonic for interpolation
+        for k in range(phase.shape[-1]):
+            p = np.maximum.accumulate(ph_t[::-1, k])[::-1]   # enforce monotonic (decreasing with rho)
+            rp[..., k] = 10 ** np.interp(-phase[..., k], -p, lr)
+            a = np.minimum.accumulate(at_t[:, k])
             ra[..., k] = 10 ** np.interp(-atten[..., k], -a, lr)
         return rp, ra
+
+    def ls_tables(self):
+        """Whole-space transform tables for the guessed long-spacing geometry."""
+        if self._ls_tables is None:
+            t_f, h_f = np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
+            ph, at = [], []
+            for r in self.rho_grid:
+                out, _ = self._raw_azimuthal([], [r], [1.0], 0.0, t_f, h_f, 1)
+                ph.append(out["LT"][0]); at.append(out["LT"][1])
+            self._ls_tables = (np.array(ph), np.array(at))
+        return self._ls_tables
 
     # ------------------------------------------------------------------ 1.5D driver
     def simulate(self, model: LayerModel, traj: Trajectory):
@@ -278,9 +323,10 @@ class ADRForward:
         depth = np.column_stack([np.zeros_like(model.boundaries_m), np.zeros_like(model.boundaries_m),
                                  model.boundaries_m]) @ n
         aniso = np.sqrt(model.rv / model.rh)
-        nc = len(self.channels)
-        ph = {k: np.empty((len(traj), nc)) for k in ("avg", "T", "B")}
-        at = {k: np.empty((len(traj), nc)) for k in ("avg", "T", "B")}
+        nc, nl = len(self.channels), len(self.long_spacings)
+        size = {"avg": nc, "T": nc, "B": nc, "LT": nl, "LB": nl}
+        ph = {k: np.empty((len(traj), m)) for k, m in size.items()}
+        at = {k: np.empty((len(traj), m)) for k, m in size.items()}
         gs = np.empty((len(traj), 2 * len(self.geosignals)))
         for i in range(len(traj)):
             t, h = traj.axis[i], traj.high[i]
@@ -293,11 +339,16 @@ class ADRForward:
             out, gs[i] = self._raw_azimuthal(depth, model.rh, aniso, traj.ned[i] @ n, basis @ t, basis @ h, pol)
             for k in ph:
                 ph[k][i], at[k][i] = out[k]
-        res = {k: self.apparent(ph[k], at[k]) for k in ph}
+        res = {k: self.apparent(ph[k], at[k]) for k in ("avg", "T", "B")}
+        if nl:
+            res.update({k: self.apparent(ph[k], at[k], self.ls_tables()) for k in ("LT", "LB")})
         cols = [np.log10(res["avg"][0]), np.log10(res["avg"][1])]
-        for m in (0, 1):
-            zr = np.empty((len(traj), 2 * nc))
-            zr[:, 0::2], zr[:, 1::2] = res["T"][m], res["B"][m]
-            cols.append(np.log10(zr))
+        for top, bottom, m_count in (("T", "B", nc), ("LT", "LB", nl)):
+            if not m_count:
+                continue
+            for m in (0, 1):
+                zr = np.empty((len(traj), 2 * m_count))
+                zr[:, 0::2], zr[:, 1::2] = res[top][m], res[bottom][m]
+                cols.append(np.log10(zr))
         cols.append(gs)
         return np.column_stack(cols)

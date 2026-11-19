@@ -7,10 +7,12 @@ The QC page picks curves; this module maps them onto the 1.5D forward model (``b
   bins 0 and 16 when a run lacks them); ``ZR..T``/``ZR..B`` curves can also be selected directly. These carry the
   up/down information that places boundaries above or below the well.
 * A ``ZG`` geosignal image contributes its **top** bin (bin 0; phase in deg, attenuation in dB).
+* ``ZR`` 50/66/82 in long-spacing images contribute top/bottom bins on a **guessed** antenna geometry
+  (``adr_forward.LS_RECEIVER_IN``), at half weight and with a plan warning.
 * Phase weight 1. With ``calibration`` on, attenuation is down-weighted and 2 MHz attenuation (averaged and
   top/bottom) gets the Z-20 resistivity-dependent correction (docs/inversion/HACKATHON_PLAN.md).
 * Single bins and geosignals are weighted by their own noise, estimated from the data in the interval.
-* ``ZR`` 50/66/82 in long-spacing images and conventional logs are listed as ignored with a reason.
+* ``ZR`` left/right bins and conventional logs are listed as ignored with a reason.
 
 Jobs run one at a time in a background thread because each uses a process pool.
 """
@@ -25,7 +27,7 @@ import uuid
 
 import numpy as np
 
-from backend.inversion.adr_forward import FT, FREQ_LETTER, ADRForward
+from backend.inversion.adr_forward import FT, FREQ_LETTER, LS_RECEIVER_IN, ADRForward
 from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
                                       default_starts, interval_from_run, noise_estimate)
 
@@ -36,6 +38,8 @@ FREQ_HZ = {letter: f for f, letter in FREQ_LETTER.items()}
 TOP_BIN, BOTTOM_BIN = 0, 16           # bin 1 = up, bin 17 = down (dossier); matches the delivered ZR T/B curves
 CALIBRATED_ATTENUATION_WEIGHT = {2e6: 0.5, 5e5: 0.25, 1.25e5: 0.25}
 GEOSIGNAL_WEIGHT = {"ZGL112AT": 0.25}  # 125 kHz attenuation geosignal barely tracks ZR top/bottom (r < 0.16)
+GUESSED_GEOMETRY_WEIGHT = 0.5           # ZR 50/66/82 in: antenna layout guessed, uncompensated
+LS_SPACINGS = (50, 66, 82)
 SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
 WORKERS = 6
 MAX_STATIONS = 250
@@ -54,11 +58,8 @@ def _ignore_reason(name: str) -> str:
     zr = ZR_CURVE.fullmatch(name)
     if zr and zr[4] in "LR" and zr[4]:
         return "left/right bin: carries no up/down information in a 1.5D (layered) model"
-    if zr or ZG_CURVE.fullmatch(name):
-        return (f"no forward-model geometry for {name[2:]}: the 50/66/82 in long-spacing antenna layout is not "
-                "confirmed" if zr else "no forward-model geometry for this geosignal spacing")
-    if AR_CURVE.fullmatch(name):
-        return "no forward-model geometry for this spacing/frequency"
+    if zr or ZG_CURVE.fullmatch(name) or AR_CURVE.fullmatch(name):
+        return f"no forward-model geometry for this spacing/frequency ({name})"
     return "not an ADR resistivity measurement (context log)"
 
 
@@ -100,14 +101,18 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
         for label, source, kind in fresh:
             letter, measurement = label[2], "phase" if label[-1 if kind == "avg" else -2] == "P" else "attenuation"
             freq = FREQ_HZ[letter]
+            spacing = int(re.match(r"\D+(\d+)", label[2:])[1])
+            guessed = kind in ("top", "bottom") and spacing in LS_SPACINGS
             if kind == "geosignal":
                 weight = GEOSIGNAL_WEIGHT.get(label, 1.0)
             elif measurement == "attenuation" and calibration:
                 weight = CALIBRATED_ATTENUATION_WEIGHT[freq]
             else:
                 weight = 1.0
+            if guessed:
+                weight *= GUESSED_GEOMETRY_WEIGHT
             entry = {"curve": name, "label": label, "kind": kind, "measurement": measurement,
-                     "frequency_hz": freq, "spacing_in": int(re.match(r"\D+(\d+)", label[2:])[1]),
+                     "frequency_hz": freq, "spacing_in": spacing, "guessed_geometry": guessed,
                      "source": source if isinstance(source, str) else f"{source[0]} bin {source[1]}",
                      "vendor_corrected": kind == "avg" and name.endswith("C"), "weight": weight, "correction": None}
             if calibration and label in ATTENUATION_CORRECTION:
@@ -127,6 +132,12 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
     if len(entries) < 3:
         warnings.append(f"Only {len(entries)} usable channels from {len(curves)} selected curves: the layered model "
                         "is poorly constrained.")
+    guessed = sorted({e["curve"] for e in entries if e["guessed_geometry"]})
+    if guessed:
+        warnings.append(f"Guessed geometry for {', '.join(guessed)}: the 50/66/82 in long-spacing antenna layout is "
+                        f"not confirmed. The model assumes the 16/32/48 in uphole transmitters and a tilted receiver "
+                        f"{LS_RECEIVER_IN:.0f} in downhole of the tool centre, uncompensated. These channels get half "
+                        "weight; check their misfit, and treat boundaries they alone resolve with caution.")
     public = [{k: v for k, v in e.items() if k != "_source"} for e in entries]
     return {"used": public, "ignored": ignored, "calibration": calibration, "warnings": warnings,
             "azimuthal": bool(directional), "_sources": {e["label"]: e["_source"] for e in entries}}
@@ -236,7 +247,14 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
         with Inverter(sub, FitConfig(**common, max_nfev=8), workers=WORKERS, on_eval=tick) as inv:
             x0 = inv.multistart(default_starts(inv, sub, k, weights=w)).x
     with Inverter(data, FitConfig(**common, max_nfev=fine_nfev), workers=WORKERS, on_eval=tick) as inv:
-        res = inv.fit(x0) if x0 is not None else inv.multistart(default_starts(inv, data, k, weights=w))
+        res = None
+        if x0 is not None:
+            try:
+                res = inv.fit(x0)
+            except ValueError:
+                res = None                     # coarse solution not usable on the full window: restart below
+        if res is None:
+            res = inv.multistart(default_starts(inv, data, k, weights=w))
     return serialize(data, res, w, sigma, lc, time.time() - t0, used)
 
 
@@ -276,6 +294,7 @@ def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
         conv = (lambda v: 10 ** v) if log else (lambda v: v)
         group, kind, measurement = _curve_meta(lab)
         entry = {"label": lab, "group": group, "kind": kind, "measurement": measurement,
+                 "guessed_geometry": lab.startswith("ZR") and int(re.match(r"\D+(\d+)", lab[2:])[1]) in LS_SPACINGS,
                  "unit": "ohm.m" if log else units[j], "source": used.get(lab, {}).get("source", lab),
                  "used": bool(weights[j] > 0), "weight": float(weights[j]), "sigma": round(float(sigma[lab]), 4),
                  "correction_applied": bool(lc is not None and (lc.a[j] or lc.g[j])),

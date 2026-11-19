@@ -68,11 +68,12 @@ function PlanView({ plan }) {
         {plan.used.map((u) => (
           <Tooltip key={u.label} title={`${u.label}: ${u.measurement}, ${u.kind === 'avg' ? 'azimuthal average'
             : u.kind === 'geosignal' ? 'top-bin geosignal' : `${u.kind} bin`}, from ${u.source}, weight ${u.weight}`
+            + (u.guessed_geometry ? '; GUESSED long-spacing antenna geometry (unconfirmed)' : '')
             + (u.correction
               ? `; Z-20 correction ×${u.correction.factor_at_10_ohmm} at 10 Ω·m, ×${u.correction.factor_at_40_ohmm} at 40 Ω·m` : '')}>
             <Chip size="small" variant={u.measurement === 'phase' ? 'outlined' : 'filled'}
-              color={KIND_COLOR[u.kind]} sx={{ fontFamily: 'monospace' }}
-              label={`${u.curve}${KIND_TAG[u.kind]} · w${u.weight}${u.correction ? ' · corr' : ''}`} />
+              color={KIND_COLOR[u.kind]} sx={{ fontFamily: 'monospace', ...(u.guessed_geometry ? { borderStyle: 'dashed' } : {}) }}
+              label={`${u.guessed_geometry ? '⚠ ' : ''}${u.curve}${KIND_TAG[u.kind]} · w${u.weight}${u.correction ? ' · corr' : ''}${u.guessed_geometry ? ' · guess' : ''}`} />
           </Tooltip>
         ))}
       </Box>
@@ -116,7 +117,7 @@ function MisfitTable({ curves }) {
         {curves.map((c) => (
           <TableRow key={c.label} sx={{ opacity: c.used ? 1 : 0.5 }}>
             <TableCell sx={{ fontFamily: 'monospace' }}>{c.label}</TableCell>
-            <TableCell>{c.kind}</TableCell>
+            <TableCell>{c.kind}{c.guessed_geometry ? ' ⚠ guessed geometry' : ''}</TableCell>
             <TableCell sx={{ fontFamily: 'monospace' }}>{c.source}</TableCell>
             <TableCell>{c.used ? 'yes' : 'no'}</TableCell>
             <TableCell>{c.weight}</TableCell>

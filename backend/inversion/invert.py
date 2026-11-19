@@ -306,7 +306,10 @@ class Inverter:
         return np.ones(self.lay.n_curves) if lc is None else 1.0 + lc.g
 
     def _resid(self, x, theory):
-        r = ((self._corrected(theory) + self.lay.bias(x) - self.data.obs) * self.w).ravel()
+        # Zero-weight channels are carried for display only; mask them so a NaN there (NaN * 0 = NaN) cannot
+        # poison the fit.
+        diff = (self._corrected(theory) + self.lay.bias(x) - self.data.obs) * self.w
+        r = np.where(self.w > 0, diff, 0.0).ravel()
         if not self.cfg.fit_bias:
             return r
         b = self.lay.bias(x)
@@ -329,7 +332,8 @@ class Inverter:
         n, m = self.data.obs.shape
         J = np.zeros((len(self._resid(x, th[0])), self.lay.n_params))
         for j in range(ne):
-            J[:n * m, j] = ((th[j + 1] - th[0]) / steps[j] * self.w * self._dcorr()).ravel()
+            col = (th[j + 1] - th[0]) / steps[j] * self.w * self._dcorr()
+            J[:n * m, j] = np.where(np.isfinite(col) & (self.w > 0), col, 0.0).ravel()
         if self.cfg.fit_bias:
             nb = self.lay.n_curves
             J[:n * m, ne:] = np.tile(np.diag(self.w), (n, 1))
@@ -337,10 +341,28 @@ class Inverter:
             J[-1, ne + self.ref_idx] = 100.0
         return J
 
+    def check_start(self, x0):
+        """Raise a ValueError naming the channels/stations that make the residual non-finite at ``x0``."""
+        theory = self._theory_batch([x0])[0]
+        r = self._resid(x0, theory).reshape(-1)[:theory.size].reshape(theory.shape)
+        if np.isfinite(r).all():
+            return
+        problems = []
+        for j in np.flatnonzero(~np.isfinite(r).all(axis=0)):
+            rows = np.flatnonzero(~np.isfinite(r[:, j]))
+            what = ("model prediction" if not np.isfinite(theory[rows, j]).all()
+                    else "measured data" if not np.isfinite(self.data.obs[rows, j]).all() else "weight/sigma")
+            md = ", ".join(f"{v:.0f}" for v in self.data.md_ft[rows[:3]])
+            problems.append(f"{self.data.labels[j]}: non-finite {what} at {rows.size} station(s) (MD {md} ft)")
+        raise ValueError("start model gives non-finite residuals; " + "; ".join(problems))
+
     def fit(self, x0):
         tvd_rel = self.data.tvd_rel_ft(self.data.tvd_ft)
         lo, hi = self.lay.bounds(tvd_rel.min() - 40, tvd_rel.max() + 40)
         x0 = np.clip(np.asarray(x0, float), lo + 1e-9, hi - 1e-9)
+        if not np.isfinite(x0).all():
+            raise ValueError(f"start model has non-finite parameters: {x0}")
+        self.check_start(x0)
         sol = least_squares(self.fun, x0, jac=self.jac, bounds=(lo, hi), method="trf",
                             x_scale="jac", max_nfev=self.cfg.max_nfev)
         theory = self._theory_batch([sol.x])[0]
@@ -350,11 +372,18 @@ class Inverter:
                          self.data.labels, float(sol.cost), int(sol.nfev))
 
     def multistart(self, starts):
-        best = None
+        """Best fit over the starts; a start that cannot be evaluated is skipped, not fatal."""
+        best, errors = None, []
         for x0 in starts:
-            r = self.fit(x0)
+            try:
+                r = self.fit(x0)
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
             if best is None or r.cost < best.cost:
                 best = r
+        if best is None:
+            raise ValueError("no start model could be evaluated: " + " | ".join(dict.fromkeys(errors)))
         return best
 
     def x_from(self, boundaries_rel_ft, log_rh, log_aniso, dip=0.0, bias=None):
