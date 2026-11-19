@@ -5,6 +5,8 @@ import math
 import numpy as np
 
 from backend.data.loader import WellRun
+from backend.qc import metrics
+from backend.qc.selection import doi_tier
 
 FT_TO_M = 0.3048
 TRAJECTORY = ("TVD", "INC", "AZI", "UTMX", "UTMY")
@@ -106,6 +108,14 @@ def color_spec(values: np.ndarray, unit: str) -> dict:
     return {"scale": "RdBu", "reverse": True, "log10": False, "zmin": -limit, "zmax": limit}
 
 
+def curve_doi(row: dict) -> tuple[float | None, str | None]:
+    """QC tab DOI index and tier for an inventory row; (None, None) for non-ADR channels."""
+    if row.get("family") not in ("AR", "ZR", "ZG"):
+        return None, None
+    doi = metrics.doi_index(row["spacing_in"], row["frequency_hz"], row["measurement"])
+    return doi, doi_tier(doi)
+
+
 def _nullable(values: np.ndarray) -> list:
     out = values.astype(object)
     out[~np.isfinite(values)] = None
@@ -126,7 +136,9 @@ def well3d(data: WellRun, curve: str, start_ft: float | None = None, end_ft: flo
     path = well_path(data)
     idx, stride = window_indices(path["md_ft"], start_ft, end_ft, max_points, path["valid"])
     raw = data.curves[curve]
-    unit = data.metadata.set_index("curve").loc[curve, "unit"]
+    row = data.metadata.set_index("curve").loc[curve].to_dict()
+    unit = row["unit"]
+    doi, tier = curve_doi(row)
     image = raw.ndim == 2
     x0, y0, z0 = (float(path[k][idx[0]]) if len(idx) else 0.0 for k in ("x", "y", "z"))
     first = idx[0] if len(idx) else None
@@ -151,6 +163,8 @@ def well3d(data: WellRun, curve: str, start_ft: float | None = None, end_ft: flo
         "origin": {"utmx": absolute("UTMX"), "utmy": absolute("UTMY"),
                    "tvd_m": None if tvd0 is None else tvd0 * FT_TO_M},
         "color": color_spec(raw, unit),
+        "doi_index": doi,
+        "doi_tier": tier,
         "md_ft": path["md_ft"][idx].tolist(),
         "tvd_ft": _nullable(tvd_ft),
         "inc_deg": _nullable(path["INC"][idx]) if path["INC"] is not None else [None] * len(idx),

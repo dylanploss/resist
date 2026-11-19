@@ -71,7 +71,7 @@ Implemented in `backend/app.py` (data and QC) and `backend/qc/api.py` (QC visual
 | POST | `/qc/select` | `{"run": "<id>", "n_select": 8}` | QC selection JSON above |
 | GET | `/runs/{run}/qc` | query `n_select` (default 8) | QC selection JSON above for that run |
 | GET | `/runs/{run}/curves/{name}` | query `start_ft`, `end_ft`, `max_points` (default 1500, 50 to 20000) | `{"run", "curve", "unit", "family", "image", "stride", "md_ft", "values"}` |
-| GET | `/runs/{run}/well3d` | query `curve` (required), `start_ft`, `end_ft`, `max_points` (default 4000, 100 to 20000) | `{"run", "well", "curve", "unit", "image", "bins", "stride", "path_source", "origin", "color", "md_ft", "tvd_ft", "inc_deg", "azi_deg", "x_m", "y_m", "z_m", "values"}` |
+| GET | `/runs/{run}/well3d` | query `curve` (required), `start_ft`, `end_ft`, `max_points` (default 4000, 100 to 20000) | `{"run", "well", "curve", "unit", "image", "bins", "stride", "path_source", "origin", "color", "doi_index", "doi_tier", "md_ft", "tvd_ft", "inc_deg", "azi_deg", "x_m", "y_m", "z_m", "values"}` |
 | POST | `/runs/{run}/selection` | `{"curves": [..], "n_select": 8}` | Saved selection record |
 
 Details:
@@ -85,6 +85,7 @@ Details:
   - `path_source` is `utm` when the path comes from `UTMX`, `UTMY` and `TVD`, and `min_curvature` when `UTMX`/`UTMY` are missing, all null or constant, so the path is integrated from `INC` and `AZI` over MD. Trajectory nulls are filled linearly between valid samples; samples outside the valid trajectory span are dropped.
   - `values` has one value per sample, or for image curves (`image` true, `bins` 32) one row of 32 bin values per sample (depth x bins, unlike `/curves/{name}`). Nulls are `null`.
   - `color` is the QC tab heatmap scale, computed over the full curve (not the window or the thinned samples): `{"scale", "reverse", "log10", "zmin", "zmax"}`. Unit `ohmm`: `Jet`, `log10` true, `zmin`/`zmax` the 2nd/98th percentile of log10 of positive values. Other units: `RdBu`, `reverse` true, `zmin`/`zmax` = -/+ the 98th percentile of absolute values (1 if that is 0). Percentile p is the sorted finite value at index floor(p x (n - 1)). `zmin`/`zmax` are in log10 units when `log10` is true.
+  - `doi_index` and `doi_tier` are the QC tab depth of investigation for the curve (`backend/qc/metrics.doi_index` on its spacing, frequency and measurement; tier shallow <= 2, medium <= 8, else deep). `doi_index` is relative (1.0 = 16 in 2 MHz phase), not a reach. Both are null for non-ADR channels (not AR, ZR or ZG).
 - `/runs/{run}/selection` saves `backend/output/selections/{run}.json` (override with `RESIST_SELECTION_DIR`) with `curves`, `auto_selected`, `added`, `removed` and `overridden_rejections`.
 
 Errors use `{"error": "<message>"}`:

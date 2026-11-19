@@ -6,7 +6,7 @@ import numpy as np
 
 from backend.app import app
 from backend.data.loader import WellRun
-from backend.qc import api
+from backend.qc import api, metrics
 from backend.services import runs, well3d
 
 RUN = "2_4-VC-2_Y3H_16634-17888ft_RES_GEOSIGNAL"
@@ -92,6 +92,17 @@ class Well3dApiTests(unittest.TestCase):
                                          "zmin": qc_percentile(logs, 0.02),
                                          "zmax": qc_percentile(logs, 0.98)})
 
+    def test_doi_matches_qc_and_grows_with_depth_of_reading(self):
+        shallow = self.get(curve="ARH16P", max_points=100).json()
+        deep = self.get(curve="ARL48AC", max_points=100).json()
+        self.assertEqual((shallow["doi_index"], shallow["doi_tier"]), (1.0, "shallow"))
+        self.assertEqual(deep["doi_index"], metrics.doi_index(48, 125_000, "attenuation"))
+        self.assertEqual(deep["doi_tier"], "deep")
+        self.assertGreater(deep["doi_index"], shallow["doi_index"])
+        conventional = self.get(curve="GR", max_points=100).json()
+        self.assertIsNone(conventional["doi_index"])
+        self.assertIsNone(conventional["doi_tier"])
+
     def test_image_curve_rows_of_32(self):
         body = self.get(curve="ZRM48A", max_points=200).json()
         self.assertTrue(body["image"])
@@ -111,7 +122,7 @@ class Well3dApiTests(unittest.TestCase):
 
     def test_min_curvature_agrees_with_utm_path(self):
         # 0.62 m measured over 382 m of hole; 2 m allows for survey stations being resampled to 0.5 ft
-        # (INC/AZI at 0.01 deg) while staying far below the 3 m tube radius drawn in the scene.
+        # (INC/AZI at 0.01 deg) while staying below the 3 m DOI tube radius drawn for ARM48PC.
         data = runs.get_run(RUN)
         path = well3d.well_path(data)
         x, y, z = well3d.minimum_curvature(data.depth_m, path["INC"], path["AZI"])
