@@ -1,15 +1,27 @@
 # Azure (Contoso) setup for the hackathon
 
-This guide is for David and Dylan, for tomorrow morning. It connects your laptop to the shared Cosmos
-DB graph that stores the inversion results.
+This guide is for David and Dylan, for tomorrow morning.
 
-## What you get
+## Status for the hackathon: snapshot only (option C)
 
-- After `git pull` and one Azure login, the backend connects to the shared graph by itself. There is
-  no key to copy and no `.env` file to edit.
-- Inversions anyone has run come back instantly (`"source": "graph"`), and the 3D well tab shows their
-  layers.
-- If you're not logged in, the app still runs on the snapshot committed in `data/graph/inversions.json`.
+The Cosmos DB account `resist-graph-olnz` exists, but a Contoso tenant policy
+(`MCAPSGovDeployPolicies` → "SFI-NS2.2.1 Secure PaaS Resources") forces public network access off, so
+laptops can't connect to it. For the hackathon, inversion results are shared through git instead:
+
+- The backend stores every finished inversion in memory and in `data/graph/inversions.json`. That file
+  is committed.
+- A request that's already stored comes back instantly (`"source": "graph"`). Tick **Force re-run** to
+  recalculate.
+- **To share your results:** run inversions, then commit and push `data/graph/inversions.json`.
+  **To get the others' results:** `git pull` and restart the backend.
+- If two people push snapshot changes at the same time, keep both sides in the merge and restart the
+  backend. Inversions are keyed by fingerprint, so entries don't clash.
+- `/health` shows `"store": "snapshot"`, and `cosmos` says it is disabled because of the tenant policy.
+
+**You don't need an Azure login for the app today.** The steps below are only needed once a policy
+exemption for `resist-hackathon-rg` is granted and `"enabled": true` is set in
+`backend/cosmos.config.json`. They're also useful if you want to look at the Azure resources. With
+Cosmos enabled, the backend fetches the key with your own `az` login, and nothing secret is committed.
 
 ## Before you start
 
@@ -96,7 +108,8 @@ npm install
 npm run dev
 ```
 
-Check that <http://localhost:5000/health> shows `"store": "cosmos"` and `"cosmos": "ok"`, then open
+Check that <http://localhost:5000/health> shows `"store": "cosmos"` and `"cosmos": "ok"` (only once
+Cosmos is enabled; today it shows `"store": "snapshot"`), then open
 <http://localhost:5173>. On Mac, use `.venv/bin/python` instead of `.venv\Scripts\python`.
 
 ## 5. Optional: the Azure MCP server in VS Code

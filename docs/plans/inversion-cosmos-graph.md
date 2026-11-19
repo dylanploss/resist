@@ -1,7 +1,7 @@
 ---
 title: Inversion results in an Azure Cosmos DB graph (Gremlin API)
 slug: inversion-cosmos-graph
-status: approved (2026-11-19 15:13: serverless, swedencentral, public network open to all, JSON snapshot in repo, return cached result instantly; Azure creation approved)
+status: approved 2026-11-19 15:13; Cosmos live connection blocked by tenant policy, hackathon runs on option C (memory + committed snapshot), 2026-11-19 15:40
 owner: Ove (plan by Planner)
 created: 2026-11-19
 supersedes: inversion-graph-store (Neo4j)
@@ -299,6 +299,24 @@ The fingerprint is the sha256 of canonical JSON of: `run`, sorted `curves`, `md_
   snapshot without code changes.
 - Revert the PR. The snapshot and the `infra/` folder are additive.
 - To remove everything in Azure: `az group delete -n resist-hackathon-rg --yes`.
+
+## Blocked: tenant policy (2026-11-19 15:25)
+
+- **What happened:** `resist-hackathon-rg` and `resist-graph-olnz` (Sweden Central, serverless,
+  Gremlin, database `resist`, graph `inversions`) were created. The tenant-root policy assignment
+  `MCAPSGovDeployPolicies` → `CosmosDB_PublicNetwork_Modify` ("SFI-NS2.2.1 Secure PaaS Resources")
+  then forced `publicNetworkAccess=Disabled`, and Gremlin connections are refused with 403. So
+  decision 3 can't be carried out.
+- **Decision for the hackathon: option C.**
+  - The backend uses memory plus the committed snapshot `data/graph/inversions.json`.
+  - Cosmos stays off: `"enabled": false` in `backend/cosmos.config.json`.
+  - The Cosmos store code and the key fetch with the caller's own `az` login stay in place.
+- **To enable live sharing later (option B):** someone with Owner or policy-exemption rights, with the
+  MCAPS governance owner's agreement, grants an exemption on `resist-hackathon-rg`. Then set
+  `"enabled": true` in `backend/cosmos.config.json`.
+- **Rejected:** a Network Security Perimeter, because it gets around a security control, and a private
+  endpoint, because laptops at the venue can't reach it.
+- **Cleanup:** `az group delete -n resist-hackathon-rg --yes` after the hackathon.
 
 ## Decisions (approved 2026-11-19 15:13)
 
