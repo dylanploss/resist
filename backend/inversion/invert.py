@@ -318,9 +318,10 @@ class Inverter:
         return np.concatenate([r, prior, ref])
 
     def fun(self, x):
+        r = self._resid(x, self._theory_batch([x])[0])
         if self.on_eval:
-            self.on_eval()
-        return self._resid(x, self._theory_batch([x])[0])
+            self.on_eval(self, x, r)
+        return r
 
     def jac(self, x):
         ne = self.lay.n_earth

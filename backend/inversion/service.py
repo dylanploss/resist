@@ -165,12 +165,14 @@ class Job:
     created: float = field(default_factory=time.time)
     started: float | None = None
     finished: float | None = None
+    partial: dict | None = None        # best model so far while running (live cross-section)
 
     def to_dict(self) -> dict:
         end = self.finished or time.time()
         return {"id": self.id, "run": self.run, "status": self.status, "progress": round(self.progress, 3),
                 "message": self.message, "request": self.request, "plan": public_plan(self.plan),
-                "error": self.error, "elapsed_s": round(end - (self.started or end), 1), "result": self.result}
+                "error": self.error, "elapsed_s": round(end - (self.started or end), 1), "result": self.result,
+                "partial": self.partial if self.status == "running" else None}
 
 
 def public_plan(plan: dict) -> dict:
@@ -239,12 +241,24 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
     coarse = len(data.md_ft) > 60
     budget = (3 * 8 if coarse else 3 * fine_nfev) + (fine_nfev if coarse else 0)
     count = [0]
+    well_path = {"md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
+                 "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1))))}
+    best = {"stage": None, "chi": np.inf}
 
-    def tick():
+    def tick(inv, x, r):
         count[0] += 1
-        if job is not None:
-            job.progress = min(0.99, count[0] / budget)
-            job.message = f"forward evaluation {count[0]} (~{budget} expected)"
+        if job is None:
+            return
+        job.progress = min(0.99, count[0] / budget)
+        stage = "coarse" if inv.data is not data else "fine"
+        job.message = f"{stage} stage, forward evaluation {count[0]} (~{budget} expected)"
+        n_used = int(np.count_nonzero(inv.w > 0)) * len(inv.data.md_ft)
+        chi = float(np.sqrt(np.sum(r ** 2) / max(1, n_used)))
+        if stage != best["stage"] or chi < best["chi"]:
+            best.update(stage=stage, chi=chi)
+            # Geometry on the full window even in the coarse stage: the model is in global coordinates.
+            job.partial = {**well_path, "stage": stage, "evaluation": count[0], "misfit_normalised": round(chi, 2),
+                           "model": model_geometry(data, inv.lay.model(x))}
 
     t0 = time.time()
     common = dict(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal)
@@ -278,8 +292,8 @@ def _curve_meta(lab):
     return lab[2:5].rstrip("PA") if kind == "avg" else lab[2:-2], kind, "phase" if m == "P" else "attenuation"
 
 
-def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
-    m = res.model
+def model_geometry(data, m) -> dict:
+    """Layer table and per-station boundary TVDs (ft) of a layered model along the interval's well path."""
     n = m.normal()
     ned = data.traj.ned
     shift = (ned[:, 0] * n[0] + ned[:, 1] * n[1]) / n[2]
@@ -287,6 +301,19 @@ def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
     boundary_tvd = [((b - shift) + ref_z) / FT for b in m.boundaries_m]
     tops = [None] + [(b + ref_z) / FT for b in m.boundaries_m]
     bottoms = [(b + ref_z) / FT for b in m.boundaries_m] + [None]
+    return {
+        "layers": [{"rh": round(float(rh), 3), "rv": round(float(rv), 3),
+                    "top_tvd_ft": None if t is None else round(t, 2),
+                    "bottom_tvd_ft": None if b is None else round(b, 2)}
+                   for rh, rv, t, b in zip(m.rh, m.rv, tops, bottoms)],
+        "dip_deg": round(float(m.dip_deg), 2), "dip_azimuth_deg": round(float(m.dip_azimuth_deg), 1),
+        "reference_note": "layer tops/bottoms are TVD at the window centre; boundaries dip along the well azimuth",
+        "boundary_tvd_ft": [_none(b) for b in boundary_tvd],
+    }
+
+
+def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
+    m = res.model
     valid = data.valid if data.valid is not None else np.ones_like(data.obs, bool)
     units = data.units or ["log"] * len(data.labels)
     used = used or {}
@@ -322,15 +349,7 @@ def serialize(data, res, weights, sigma, lc, elapsed, used=None) -> dict:
         "md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
         "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1)))),
         "curves": curves,
-        "model": {
-            "layers": [{"rh": round(float(rh), 3), "rv": round(float(rv), 3),
-                        "top_tvd_ft": None if t is None else round(t, 2),
-                        "bottom_tvd_ft": None if b is None else round(b, 2)}
-                       for rh, rv, t, b in zip(m.rh, m.rv, tops, bottoms)],
-            "dip_deg": round(float(m.dip_deg), 2), "dip_azimuth_deg": round(float(m.dip_azimuth_deg), 1),
-            "reference_note": "layer tops/bottoms are TVD at the window centre; boundaries dip along the well azimuth",
-            "boundary_tvd_ft": [_none(b) for b in boundary_tvd],
-        },
+        "model": model_geometry(data, m),
         "rms_percent_used": round(float(100 * (10 ** np.sqrt(np.mean(res_pct ** 2)) - 1)), 2) if res_pct.size else None,
         "misfit_normalised": round(float(np.sqrt(np.mean(chi ** 2))), 2) if chi.size else None,
         "stations": int(len(data.md_ft)), "forward_evaluations": int(res.nfev), "elapsed_s": round(elapsed, 1),
