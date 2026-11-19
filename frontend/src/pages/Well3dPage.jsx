@@ -17,7 +17,12 @@ const MAX_POINTS = 4000
 const STEPS_FT = [10, 25, 50, 100, 250, 500]
 const SPEEDS_FT_S = [25, 50, 100, 200, 500, 1000]
 const EXAGGERATIONS = [1, 2, 5, 10, 20]
-const RADII_M = [1, 2, 3, 5, 10, 20]
+const TUBE_SCALES = [1, 2, 5, 10]
+// Estimate, not a measured reach: QC doi_index is relative (1.0 = 16 in 2 MHz phase). Assumed 0.5 m per
+// unit (uncalibrated): the reference curve draws 0.5 m and the deepest index (112 in 125 kHz
+// attenuation, 42) 21 m. Rationale: docs/plans/well-3d-view.md implementation notes.
+const METRES_PER_DOI = 0.5
+const FALLBACK_RADIUS_M = 3
 const ZOOM_FACTOR = 0.3
 
 function hasWebGL() {
@@ -91,7 +96,9 @@ export default function Well3dPage({ runs, active }) {
   const data = well.data
 
   const [exaggeration, setExaggeration] = useState(1)
-  const [radius, setRadius] = useState(3)
+  const [tubeScale, setTubeScale] = useState(1)
+  const baseRadius = data?.doi_index != null ? data.doi_index * METRES_PER_DOI : FALLBACK_RADIUS_M
+  const radius = baseRadius * tubeScale
   const [step, setStep] = useState(50)
   const [speed, setSpeed] = useState(100)
   const [mode, setMode] = useState('free')
@@ -201,7 +208,7 @@ export default function Well3dPage({ runs, active }) {
               <Tooltip title="Fit the whole well (free camera)"><Button onClick={reset}>Reset view</Button></Tooltip>
             </ButtonGroup>
             <PickSelect label="Vertical exag." value={exaggeration} onChange={setExaggeration} options={EXAGGERATIONS} suffix="×" width={120} />
-            <PickSelect label="Tube radius" value={radius} onChange={setRadius} options={RADII_M} suffix=" m" width={110} />
+            <PickSelect label="Tube scale" value={tubeScale} onChange={setTubeScale} options={TUBE_SCALES} suffix="×" width={110} />
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 1 }}>
             <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>MD (ft)</Typography>
@@ -219,6 +226,12 @@ export default function Well3dPage({ runs, active }) {
                 MD {fmtNum(md)} ft · TVD {fmtNum(readout.tvd)} ft<br />
                 Value {fmtValue(readout.value)} {data.unit}{readout.label}<br />
                 INC {fmtNum(readout.inc)}° · AZI {fmtNum(readout.azi)}°
+              </Typography>
+              <Typography variant="body2" data-testid="well3d-doi">
+                {data.doi_index != null
+                  ? `DOI index ${fmtNum(data.doi_index)} (${data.doi_tier}) · tube radius ≈ ${fmtNum(radius)} m (estimate)`
+                  : `No DOI (non-ADR curve) · fixed tube radius ${fmtNum(radius)} m`}
+                {tubeScale > 1 && ` · ${tubeScale}× scale`}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 ↑/↓ travel · +/− zoom · space play · drag to orbit (Free)
