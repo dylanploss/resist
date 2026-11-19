@@ -198,6 +198,13 @@ def get(job_id: str) -> Job | None:
         return _jobs.get(job_id)
 
 
+def finished_jobs(run_id: str) -> list[Job]:
+    """Completed jobs of a run, newest first."""
+    with _jobs_lock:
+        done = [j for j in _jobs.values() if j.run == run_id and j.status == "done"]
+    return sorted(done, key=lambda j: j.finished or 0, reverse=True)
+
+
 def _execute(job: Job, run) -> None:
     with _slot:
         job.status, job.started, job.message = "running", time.time(), "loading interval"
