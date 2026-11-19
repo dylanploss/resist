@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Box, Button, Chip, CircularProgress, FormControl, FormControlLabel, InputLabel, LinearProgress, MenuItem,
+  Alert, Box, Button, Checkbox, Chip, CircularProgress, FormControl, FormControlLabel, InputLabel, LinearProgress, MenuItem,
   Paper, Select, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material'
 import {
@@ -142,6 +142,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const [job, setJob] = useState(null)
   const [submitError, setSubmitError] = useState(null)
   const [showAll, setShowAll] = useState(false)
+  const [force, setForce] = useState(false)
 
   const settings = useMemo(() => settingsByRun[run] ?? (defaults.data
     ? { ...BASE_SETTINGS, mdMin: String(defaults.data.md_min_ft), mdMax: String(defaults.data.md_max_ft) } : null),
@@ -179,7 +180,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
 
   const start = () => {
     setSubmitError(null)
-    postInversionJob(request).then(setJob).catch((e) => setSubmitError(e.message))
+    postInversionJob(force ? { ...request, force: true } : request).then(setJob).catch((e) => setSubmitError(e.message))
   }
 
   const result = job?.run === run && job?.status === 'done' ? job.result : null
@@ -260,7 +261,19 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 {jobActive ? 'Inverting…' : 'Run inversion'}
               </Button>
               {jobActive && <CircularProgress size={18} />}
+              <Tooltip title="Stored results are returned instantly; tick to compute this request again and replace the stored one">
+                <FormControlLabel sx={{ ml: 'auto' }} label="Force re-run"
+                  control={<Checkbox size="small" checked={force} onChange={(e) => setForce(e.target.checked)} />} />
+              </Tooltip>
             </Box>
+            {job?.run === run && job?.status === 'done' && (
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1 }}>
+                {job.source === 'graph'
+                  ? <Chip size="small" color="info" label="from graph" title="Returned from the inversion store without computing" />
+                  : <Chip size="small" variant="outlined" label="computed" />}
+                <Typography variant="caption" color="text.secondary">{job.message}</Typography>
+              </Box>
+            )}
             {jobActive && (
               <Box sx={{ mt: 1 }}>
                 <LinearProgress variant="determinate" value={100 * (job.progress || 0)} />

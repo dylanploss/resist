@@ -1,4 +1,10 @@
-"""Where finished inversions live: the shared Cosmos DB graph, or memory (+ the committed snapshot).
+"""Where finished inversions live.
+
+* ``SnapshotStore`` (default): memory, loaded from and written to the committed ``data/graph/inversions.json``.
+* ``CosmosStore`` (``backend.inversion.cosmos_store``): the shared Cosmos DB graph, only when ``COSMOS_ENABLED=true``
+  or ``"enabled": true`` in ``backend/cosmos.config.json``. Today the tenant policy SFI-NS2.2.1 forces public
+  network access off on the account, so it is disabled by default.
+* ``MemoryStore``: no persistence (``RESIST_STORE=memory``, tests).
 
 A *record* is the unit both stores save and return::
 
@@ -124,52 +130,99 @@ class MemoryStore:
         return None
 
 
+class SnapshotStore(MemoryStore):
+    """MemoryStore backed by the committed JSON snapshot: loaded on start, rewritten (atomically) on each change.
+
+    This is the default store. Results are shared by committing ``data/graph/inversions.json``.
+    """
+
+    kind = "snapshot"
+
+    def __init__(self, path: Path = SNAPSHOT_PATH):
+        super().__init__()
+        self.path = Path(path)
+        self._write_lock = threading.Lock()
+        self.loaded = 0
+        if self.path.is_file():
+            from backend.inversion import graph_io
+            for rec in graph_io.read_snapshot(self.path):
+                MemoryStore.save(self, rec)
+                self.loaded += 1
+
+    def _write(self):
+        from backend.inversion import graph_io
+        with self._write_lock:
+            graph_io.write_snapshot(self.all_records(), self.path)
+
+    def save(self, record):
+        info = super().save(record)
+        self._write()
+        return info
+
+    def delete(self, fingerprint, run=None):
+        super().delete(fingerprint, run)
+        self._write()
+
+
 # --- factory -----------------------------------------------------------------------------------------------
 
+COSMOS_DISABLED = "disabled (tenant policy SFI-NS2.2.1 blocks public network access)"
 _store: InversionStore | None = None
-_status: dict = {"store": "memory", "cosmos": "unavailable", "reason": "not initialised"}
+_status: dict = {"store": "snapshot", "cosmos": COSMOS_DISABLED}
 _init_lock = threading.Lock()
 _last_ping = [0.0]
 PING_INTERVAL_S = 30.0
 
 
-def _load_snapshot(store, path: Path = SNAPSHOT_PATH) -> int:
-    if os.environ.get("RESIST_SNAPSHOT", "on").lower() in ("0", "off", "false", "no") or not path.is_file():
-        return 0
-    from backend.inversion import graph_io
+def cosmos_enabled(environ=None) -> bool:
+    """COSMOS_ENABLED (env or backend/.env) wins; else ``enabled`` in backend/cosmos.config.json; default false."""
+    from backend.inversion import cosmos_config
+    env = {**cosmos_config.read_env_file(), **(os.environ if environ is None else environ)}
+    if "COSMOS_ENABLED" in env:
+        return env["COSMOS_ENABLED"].strip().lower() in ("1", "true", "yes", "on")
+    return bool(cosmos_config.read_config().get("enabled", False))
+
+
+def _snapshot_store() -> SnapshotStore:
     try:
-        return graph_io.import_snapshot(store, path)["imported"]
+        return SnapshotStore()
     except Exception as exc:  # a broken snapshot must not stop the backend
-        log.warning("could not load inversion snapshot %s: %s", path, exc)
-        return 0
+        log.warning("could not load inversion snapshot %s: %s; starting empty", SNAPSHOT_PATH, exc)
+        store = SnapshotStore.__new__(SnapshotStore)
+        MemoryStore.__init__(store)
+        store.path, store._write_lock, store.loaded = SNAPSHOT_PATH.with_suffix(".recovered.json"), threading.Lock(), 0
+        return store
 
 
 def _build() -> InversionStore:
-    mode = os.environ.get("RESIST_STORE", "auto").lower()
-    if mode != "memory":
-        from backend.inversion import cosmos_config
-        settings = cosmos_config.resolve()
-        if settings.key:
-            try:
-                from backend.inversion.cosmos_store import CosmosStore
-                store = CosmosStore(settings)
-                store.ping()
-                _status.update(store="cosmos", cosmos="ok", reason=None, account=settings.account,
-                               key_source=settings.key_source)
-                log.info("inversion store: Cosmos DB graph %s (%s/%s, key from %s)", settings.account,
-                         settings.database, settings.graph, settings.key_source)
-                return store
-            except Exception as exc:
-                reason = f"Cosmos DB graph unreachable: {type(exc).__name__}: {str(exc)[:200]}"
-        else:
-            reason = settings.reason or "no Cosmos key"
-        log.warning("Cosmos graph store unavailable (%s); using the in-memory store and the snapshot. "
-                    "To connect, %s, then restart the backend.", reason, cosmos_config.LOGIN_HINT)
+    if os.environ.get("RESIST_STORE", "").lower() == "memory":
+        _status.update(store="memory", cosmos="disabled (RESIST_STORE=memory)", reason=None)
+        return MemoryStore()
+    if not cosmos_enabled():
+        store = _snapshot_store()
+        _status.update(store="snapshot", cosmos=COSMOS_DISABLED, reason=None, snapshot_records=store.loaded)
+        log.info("inversion store: snapshot %s (%d records); Cosmos %s", store.path, store.loaded, COSMOS_DISABLED)
+        return store
+    from backend.inversion import cosmos_config
+    settings = cosmos_config.resolve()
+    if settings.key:
+        try:
+            from backend.inversion.cosmos_store import CosmosStore
+            store = CosmosStore(settings)
+            store.ping()
+            _status.update(store="cosmos", cosmos="ok", reason=None, account=settings.account,
+                           key_source=settings.key_source)
+            log.info("inversion store: Cosmos DB graph %s (%s/%s, key from %s)", settings.account,
+                     settings.database, settings.graph, settings.key_source)
+            return store
+        except Exception as exc:
+            reason = f"Cosmos DB graph unreachable: {type(exc).__name__}: {str(exc)[:200]}"
     else:
-        reason = "RESIST_STORE=memory"
-    store = MemoryStore()
-    loaded = _load_snapshot(store)
-    _status.update(store="memory", cosmos="unavailable", reason=reason, snapshot_records=loaded)
+        reason = settings.reason or "no Cosmos key"
+    log.warning("Cosmos graph store unavailable (%s); using the snapshot store. To connect, %s, then restart the "
+                "backend.", reason, cosmos_config.LOGIN_HINT)
+    store = _snapshot_store()
+    _status.update(store="snapshot", cosmos="unavailable", reason=reason, snapshot_records=store.loaded)
     return store
 
 
@@ -187,16 +240,18 @@ def set_store(store: InversionStore | None) -> None:
     global _store
     _store = store
     if store is not None:
-        _status.update(store=store.kind, cosmos="ok" if store.kind == "cosmos" else "unavailable",
-                       reason=None if store.kind == "cosmos" else "store set explicitly")
+        _status.update(store=store.kind, cosmos="ok" if store.kind == "cosmos" else "disabled (store set explicitly)",
+                       reason=None)
 
 
 def status() -> dict:
-    """Health fields; pings Cosmos at most every PING_INTERVAL_S and never raises or blocks on init."""
+    """Health fields. Never raises; never blocks on a Cosmos connection (pinged at most every 30 s)."""
     if _store is None:
-        if not _init_lock.locked():
-            threading.Thread(target=get_store, name="store-init", daemon=True).start()
-        return {"store": "memory", "cosmos": "unavailable", "reason": "connecting to the inversion store"}
+        if cosmos_enabled():
+            if not _init_lock.locked():
+                threading.Thread(target=get_store, name="store-init", daemon=True).start()
+            return {"store": "snapshot", "cosmos": "unavailable", "reason": "connecting to Cosmos DB"}
+        get_store()
     store = _store
     if store.kind == "cosmos" and time.time() - _last_ping[0] > PING_INTERVAL_S:
         _last_ping[0] = time.time()

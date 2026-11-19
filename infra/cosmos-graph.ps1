@@ -84,9 +84,13 @@ if (-not $gr) {
     Invoke-Az cosmosdb gremlin graph create -a $AccountName -g $ResourceGroup -d $Database -n $Graph --partition-key-path /pk -o none
 } else { Write-Host "Graph $Graph exists" }
 
-# Non-secret connection settings (tracked)
+# Non-secret connection settings (tracked). 'enabled' is kept as is (default false: the tenant policy
+# SFI-NS2.2.1 forces public network access off, so laptops cannot reach the account today).
+$enabled = $false
+if (Test-Path $ConfigPath) { $prev = Get-Content $ConfigPath -Raw | ConvertFrom-Json; if ($prev.enabled) { $enabled = [bool]$prev.enabled } }
 $region = Invoke-Az cosmosdb show -n $AccountName -g $ResourceGroup --query "locations[0].locationName" -o tsv
 $config = [ordered]@{
+    enabled         = $enabled
     tenant_id       = $TenantId
     subscription_id = $SubscriptionId
     resource_group  = $ResourceGroup
@@ -97,6 +101,7 @@ $config = [ordered]@{
     database        = $Database
     graph           = $Graph
     partition_key   = '/pk'
+    public_network_access = 'Disabled (tenant policy SFI-NS2.2.1)'
 }
 ($config | ConvertTo-Json) + "`n" | Set-Content -Path $ConfigPath -Encoding utf8 -NoNewline
 Write-Host "Wrote $ConfigPath (no secrets)"
