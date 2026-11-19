@@ -107,6 +107,11 @@ travel-down-the-well camera and a coloured tube, and that can later wrap the 32-
     resistivity, so the tube swells in resistive zones and narrows in conductive ones. It replaces
     the constant radius per curve from criterion 11. The panel shows the DOI at the travel point,
     labelled as an estimate.
+13. **Directional DOI tube (change request, 2026-11-19 13:18).** The tube must not get wider all
+    the way round. It grows only on the side where the colour turns red (more resistive). For
+    azimuthal images each of the 32 bins gets its own reach from its own resistivity, so the ring
+    bulges toward the resistive bins and stays narrow toward the conductive ones. A redder bin
+    never gets a smaller radius than a bluer bin in the same ring.
 
 ## Approach
 
@@ -239,6 +244,11 @@ endpoint. Nothing else depends on them.
 - **Labels:** depth ticks and the north arrow label are screen-sized sprites, not drei `Html`, which logged React root unmount errors.
 - **QC action:** a **3D** link next to each curve name in the QC table, and a click on a chip in the selection summary.
 - **Known console warning:** `THREE.Clock: This module has been deprecated` comes from R3F 9.8 with three 0.187; it is a warning, not an error.
+- **Directional DOI tube (criterion 13):** done on `feature/well3d-directional-doi`.
+  - For 32-bin ZR images, `doi_m` holds one value per bin (`well3d.doi_profile`). Ring vertex k sits on the centre of bin k, where the texture also centres it, so each bulge lines up with its colour.
+  - The resistivity uses the same 2nd–98th percentile clip as the colour scale, and the saturation mask was dropped. It had refilled tool-limit bins (the reddest) with the ring mean, which made red bins narrower. A test checks that a redder bin never has a smaller radius in the same ring.
+  - On Z-19 ZRL48A the radius varies by 0.5–1 m around each ring (10th–90th percentile), on a reach of about 2.6–4.3 m.
+  - Single-value curves (AR, ZR quadrants) are one colour all round, so their rings stay round and only change size along the well. ZG geosignals have no resistivity per bin, so they keep a round ring sized from the run's deep AR curve.
 - **Irregular DOI tube (criterion 12):** done; this replaces the constant `METRES_PER_DOI` radius from step 10.
   - The backend returns `doi_m`, with one value per sample (`well3d.doi_metres`): skin depth `δ = 503.3·√(ρ/f)` in the local resistivity, softly capped at `DOI_CAP_SPACINGS = 3` transmitter–receiver spacings (`1/doi² = 1/δ² + 1/cap²`), and × 1.5 for attenuation, the same factor the QC index uses.
   - `ρ` is the curve itself for AR/ZR (the mean of the bins for images). For ZG it is the run's deepest AR resistivity (`doi_source`). Saturated samples are masked, the rest are clipped to the 2nd–98th percentile, and gaps are interpolated.

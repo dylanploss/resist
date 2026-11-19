@@ -33,6 +33,8 @@ function hasWebGL() {
 
 const fmtNum = (v, digits = 1) => (v == null || !Number.isFinite(v) ? '–' : v.toFixed(digits))
 const fmtValue = (v) => (v == null || !Number.isFinite(v) ? 'null' : Math.abs(v) >= 1000 ? v.toExponential(2) : v.toPrecision(4))
+// Per-bin DOI shows the low and high side of the ring.
+const fmtDoi = (r) => (Array.isArray(r) ? `${fmtNum(Math.min(...r), 2)}–${fmtNum(Math.max(...r), 2)}` : fmtNum(r, 2))
 
 function sampleValue(data, i) {
   const row = data.values[i]
@@ -94,9 +96,21 @@ export default function Well3dPage({ runs, active }) {
 
   const [exaggeration, setExaggeration] = useState(1)
   const [tubeScale, setTubeScale] = useState(1)
-  // Per-sample DOI in metres from the backend (skin depth in the local resistivity); see well3d.doi_metres.
-  const radii = useMemo(() => (data?.doi_m ? data.doi_m.map((r) => r * tubeScale) : null), [data, tubeScale])
-  const radius = radii ? Math.max(...radii) : FALLBACK_RADIUS_M * tubeScale
+  // DOI in metres from the backend: one value per sample, or per bin for azimuthal images; see well3d.doi_profile.
+  const radii = useMemo(() => (data?.doi_m
+    ? data.doi_m.map((r) => (Array.isArray(r) ? r.map((b) => b * tubeScale) : r * tubeScale))
+    : null), [data, tubeScale])
+  const doiRange = useMemo(() => {
+    if (!data?.doi_m) return null
+    let min = Infinity
+    let max = -Infinity
+    for (const r of data.doi_m.flat()) {
+      if (r < min) min = r
+      if (r > max) max = r
+    }
+    return { min, max }
+  }, [data])
+  const radius = doiRange ? doiRange.max * tubeScale : FALLBACK_RADIUS_M * tubeScale
   const [step, setStep] = useState(50)
   const [speed, setSpeed] = useState(100)
   const [mode, setMode] = useState('free')
@@ -227,8 +241,8 @@ export default function Well3dPage({ runs, active }) {
               </Typography>
               <Typography variant="body2" data-testid="well3d-doi">
                 {data.doi_m
-                  ? `DOI here ≈ ${fmtNum(data.doi_m[readout.i], 2)} m (estimate, from ${data.doi_source}) · ` +
-                    `run ${fmtNum(Math.min(...data.doi_m), 2)}–${fmtNum(Math.max(...data.doi_m), 2)} m · ` +
+                  ? `DOI here ≈ ${fmtDoi(data.doi_m[readout.i])} m (estimate, from ${data.doi_source}) · ` +
+                    `run ${fmtNum(doiRange.min, 2)}–${fmtNum(doiRange.max, 2)} m · ` +
                     `QC index ${fmtNum(data.doi_index)} (${data.doi_tier})`
                   : `No DOI (non-ADR curve) · fixed tube radius ${fmtNum(radius)} m`}
                 {tubeScale > 1 && ` · ${tubeScale}× scale`}

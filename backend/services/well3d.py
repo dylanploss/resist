@@ -153,31 +153,40 @@ def _reference_resistivity(data: WellRun, row: dict) -> str | None:
 
 
 def doi_profile(data: WellRun, row: dict, idx: np.ndarray, md_ft: np.ndarray) -> dict | None:
-    """Per-sample DOI in metres for the returned samples, or None for non-ADR curves."""
+    """DOI in metres for the returned samples, or None for non-ADR curves.
+
+    Azimuthal resistivity images give one DOI per bin (shape n x bins), from the same bin values
+    that colour the tube, so the reach grows only on the side where the image turns resistive (red).
+    Other curves give one DOI per sample.
+    """
     if row.get("family") not in ("AR", "ZR", "ZG"):
         return None
     source = _reference_resistivity(data, row)
     if source is None:
         return None
     raw = np.asarray(data.curves[source], dtype=float)
-    positive = np.where(raw > 0, raw, np.nan)
-    if raw.ndim == 2:
-        counts = np.isfinite(positive).sum(axis=1)
-        rho = np.where(counts > 0, np.nansum(positive, axis=1) / np.maximum(counts, 1), np.nan)
-    else:
-        rho = positive
-    rho, _ = metrics.mask_saturation(rho)
-    low, high = _percentile(rho, 0.02), _percentile(rho, 0.98)
+    rho = np.where(raw > 0, raw, np.nan)
+    # Same 2nd-98th percentile clip as the colour scale, so a redder bin always reads deeper.
+    low, high = _percentile(rho.ravel(), 0.02), _percentile(rho.ravel(), 0.98)
     if low is None:
         return None
-    rho = np.clip(rho, low, high)
-    picked = rho[idx]
-    ok = np.isfinite(picked)
+    picked = np.clip(rho[idx], low, high)
+    ring = picked if picked.ndim == 1 else _row_mean(picked)
+    ok = np.isfinite(ring)
     if not ok.any():
         return None
-    picked = np.interp(md_ft[idx], md_ft[idx][ok], picked[ok])
+    ring = np.interp(md_ft[idx], md_ft[idx][ok], ring[ok])
+    if picked.ndim == 2:
+        picked = np.where(np.isfinite(picked), picked, ring[:, None])
+    else:
+        picked = ring
     doi = doi_metres(picked, row["frequency_hz"], row["spacing_in"], row["measurement"])
-    return {"doi_m": doi, "source": source, "rho": picked}
+    return {"doi_m": doi, "source": source}
+
+
+def _row_mean(values: np.ndarray) -> np.ndarray:
+    counts = np.isfinite(values).sum(axis=1)
+    return np.where(counts > 0, np.nansum(values, axis=1) / np.maximum(counts, 1), np.nan)
 
 
 def _nullable(values: np.ndarray) -> list:

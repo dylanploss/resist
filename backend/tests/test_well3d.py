@@ -135,6 +135,19 @@ class Well3dApiTests(unittest.TestCase):
         self.assertEqual(len(body["values"]), len(body["md_ft"]))
         self.assertEqual({len(row) for row in body["values"]}, {32})
 
+    def test_image_doi_is_per_bin_and_only_grows_toward_resistive_bins(self):
+        body = self.get(curve="ZRM48A", max_points=300).json()
+        doi = np.array(body["doi_m"], dtype=float)
+        self.assertEqual(doi.shape, (len(body["md_ft"]), 32))
+        self.assertTrue(np.all(np.isfinite(doi)))
+        values = np.array([[np.nan if v is None else v for v in row] for row in body["values"]])
+        rings = np.flatnonzero(np.isfinite(values).all(axis=1))
+        self.assertGreater(len(rings), 0)
+        for i in rings:
+            order = np.argsort(values[i], kind="stable")
+            self.assertTrue(np.all(np.diff(doi[i][order]) >= -1e-9), f"ring {i}")
+        self.assertGreater(np.median(doi.max(axis=1) - doi.min(axis=1)), 0)
+
     @unittest.skipUnless((api.DATA_DIR / f"{GEOSIGNAL_RUN}.dlis").exists(), "geosignal run not available")
     def test_geosignal_colour_spec_is_symmetric_rdbu(self):
         curve = "ZGL112A"
