@@ -93,7 +93,10 @@ class PlanTests(unittest.TestCase):
         delivered_only = build_plan(SimpleNamespace(curves={"ZRM32AT": None}), ["ZRM32AT"])
         self.assertEqual(delivered_only["_sources"]["ZRM32AT"], "ZRM32AT")
         self.assertIn("left/right", reasons["ZRH16PL"])
-        self.assertIn("long-spacing", reasons["ZRM50P"])
+        self.assertTrue(used["ZRM50PT"]["guessed_geometry"])
+        self.assertEqual(used["ZRM50PB"]["weight"], 0.5)
+        self.assertFalse(used["ZRL48PT"]["guessed_geometry"])
+        self.assertTrue(any("Guessed geometry for ZRM50P" in w for w in plan["warnings"]))
         self.assertIn("context log", reasons["GR"])
         averaged_only = build_plan(run, ["ARH16A"], calibration=False)
         self.assertFalse(averaged_only["azimuthal"])
@@ -123,7 +126,7 @@ class DirectionalForwardTests(unittest.TestCase):
 
     def test_homogeneous_has_equal_bins_and_zero_geosignal(self):
         (v,) = self.values(LayerModel(np.array([]), np.array([10.0]), np.array([10.0])), [0.0])
-        for lab in ("ARH16P", "ZRH16PT", "ZRH16PB", "ZRL48AT"):
+        for lab in ("ARH16P", "ZRH16PT", "ZRH16PB", "ZRL48AT", "ZRM50PT", "ZRL82PB"):
             self.assertAlmostEqual(10 ** v[lab], 10.0, delta=0.02)
         for lab in ("ZGM112PT", "ZGM112AT", "ZGL112PT"):
             self.assertAlmostEqual(v[lab], 0.0, places=6)
@@ -132,6 +135,8 @@ class DirectionalForwardTests(unittest.TestCase):
         (below,) = self.values(LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0])), [0.8])
         (above,) = self.values(LayerModel(np.array([-1.0]), np.array([50.0, 8.0]), np.array([50.0, 8.0])), [-0.8])
         self.assertGreater(below["ZRL48PB"], below["ZRL48PT"])
+        self.assertGreater(below["ZRM50PB"], below["ZRM50PT"])
+        self.assertGreater(below["ZRL82PB"], below["ZRL82PT"])
         # Delivered-data convention: top geosignal rises when the bottom bin reads more resistive.
         self.assertGreater(below["ZGM112PT"], 1.0)
         self.assertGreater(below["ZGM112AT"], 0.1)
@@ -197,6 +202,50 @@ class QuadrantTests(unittest.TestCase):
             single = np.abs(np.log10(quadrant(c["ZRM48P"][ok], side, method="bin") / c["ZRM48P" + side][ok]))
             self.assertLess(np.median(err), np.log10(1.02))
             self.assertLess(np.median(err), np.median(single))
+
+
+class RobustnessTests(unittest.TestCase):
+    def setUp(self):
+        n = 6
+        md = 20000 + np.arange(n) * 4.0
+        traj = Trajectory.from_curves(md, np.full(n, 10600.0), np.full(n, 88.0), np.zeros(n), np.zeros(n),
+                                      md * FT, ref=[0, 0, 10600 * FT])
+        self.labels = ADRForward().channel_labels()
+        obs = np.full((n, len(self.labels)), 1.0)
+        self.data = IntervalData("synthetic", md, traj, obs, self.labels, np.zeros(n), np.array([0, 0, 10600 * FT]),
+                                 np.full(n, 10600.0))
+        self.weights = {lab: (1.0 if lab == "ARH16P" else 0.0) for lab in self.labels}
+
+    def inverter(self, theory_of):
+        inv = Inverter(self.data, FitConfig(n_layers=1, fit_dip=False, curve_weights=self.weights), workers=1)
+        inv._theory_batch = lambda xs: [theory_of(x) for x in xs]
+        return inv
+
+    def test_nan_on_unused_channel_does_not_poison_fit(self):
+        def theory(x):
+            t = np.full(self.data.obs.shape, x[0])
+            t[:, self.labels.index("ARL48A")] = np.nan           # weight 0: display only
+            return t
+
+        with self.inverter(theory) as inv:
+            r = inv.fit(inv.x_from([], [1.3], 0.1))
+        self.assertTrue(np.isfinite(r.cost))
+        self.assertAlmostEqual(r.x[0], 1.0, places=3)
+
+    def test_multistart_skips_unusable_start_and_reports_channel(self):
+        j = self.labels.index("ARH16P")
+
+        def theory(x):
+            t = np.full(self.data.obs.shape, x[0])
+            if x[0] > 2.0:
+                t[2, j] = np.nan
+            return t
+
+        with self.inverter(theory) as inv:
+            good = inv.multistart([inv.x_from([], [2.5], 0.1), inv.x_from([], [1.4], 0.1)])
+            self.assertAlmostEqual(good.x[0], 1.0, places=3)
+            with self.assertRaisesRegex(ValueError, r"ARH16P: non-finite model prediction at 1 station\(s\) \(MD 20008"):
+                inv.multistart([inv.x_from([], [2.5], 0.1)])
 
 
 if __name__ == "__main__":

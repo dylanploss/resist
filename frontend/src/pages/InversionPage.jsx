@@ -12,7 +12,7 @@ import RunPicker from '../components/RunPicker.jsx'
 import CurtainPlot from '../components/inversion/CurtainPlot.jsx'
 import InversionTracks from '../components/inversion/InversionTracks.jsx'
 
-const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false }
+const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false, sectionFt: '15' }
 const ACTIVE = ['queued', 'running']
 
 export function Card({ title, extra, children }) {
@@ -68,11 +68,12 @@ function PlanView({ plan }) {
         {plan.used.map((u) => (
           <Tooltip key={u.label} title={`${u.label}: ${u.measurement}, ${u.kind === 'avg' ? 'azimuthal average'
             : u.kind === 'geosignal' ? 'top-bin geosignal' : `${u.kind} bin`}, from ${u.source}, weight ${u.weight}`
+            + (u.guessed_geometry ? '; GUESSED long-spacing antenna geometry (unconfirmed)' : '')
             + (u.correction
               ? `; Z-20 correction ×${u.correction.factor_at_10_ohmm} at 10 Ω·m, ×${u.correction.factor_at_40_ohmm} at 40 Ω·m` : '')}>
             <Chip size="small" variant={u.measurement === 'phase' ? 'outlined' : 'filled'}
-              color={KIND_COLOR[u.kind]} sx={{ fontFamily: 'monospace' }}
-              label={`${u.curve}${KIND_TAG[u.kind]} · w${u.weight}${u.correction ? ' · corr' : ''}`} />
+              color={KIND_COLOR[u.kind]} sx={{ fontFamily: 'monospace', ...(u.guessed_geometry ? { borderStyle: 'dashed' } : {}) }}
+              label={`${u.guessed_geometry ? '⚠ ' : ''}${u.curve}${KIND_TAG[u.kind]} · w${u.weight}${u.correction ? ' · corr' : ''}${u.guessed_geometry ? ' · guess' : ''}`} />
           </Tooltip>
         ))}
       </Box>
@@ -116,7 +117,7 @@ function MisfitTable({ curves }) {
         {curves.map((c) => (
           <TableRow key={c.label} sx={{ opacity: c.used ? 1 : 0.5 }}>
             <TableCell sx={{ fontFamily: 'monospace' }}>{c.label}</TableCell>
-            <TableCell>{c.kind}</TableCell>
+            <TableCell>{c.kind}{c.guessed_geometry ? ' ⚠ guessed geometry' : ''}</TableCell>
             <TableCell sx={{ fontFamily: 'monospace' }}>{c.source}</TableCell>
             <TableCell>{c.used ? 'yes' : 'no'}</TableCell>
             <TableCell>{c.weight}</TableCell>
@@ -182,6 +183,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   }
 
   const result = job?.run === run && job?.status === 'done' ? job.result : null
+  const live = job?.run === run && jobActive && job.partial ? job.partial : null
+  const sectionFt = Math.max(1, Number(settings?.sectionFt ?? 15) || 15)
 
   return (
     <Box sx={{ display: 'grid', gap: 2, alignItems: 'start',
@@ -235,6 +238,10 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 <FormControlLabel sx={{ gridColumn: '1 / -1' }} control={
                   <Switch checked={settings.quick} onChange={(e) => update({ quick: e.target.checked })} />}
                   label="Quick (fewer iterations)" />
+                <TextField size="small" label="Section ± ft around well" type="number" sx={{ gridColumn: '1 / -1' }}
+                  value={settings.sectionFt ?? '15'} slotProps={{ htmlInput: { min: 1, step: 1 } }}
+                  helperText="TVD band shown in the cross-sections (display only)"
+                  onChange={(e) => update({ sectionFt: e.target.value })} />
               </Box>
             )}
             {defaults.data?.reason && (
@@ -267,7 +274,18 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
       </Box>
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-        {!result && (
+        {live && (
+          <Card title="Live cross-section" extra={`best model so far · ${live.stage} stage · evaluation ${live.evaluation}`
+            + ` · misfit/noise ${live.misfit_normalised} · ±${sectionFt} ft around the well`}>
+            <LinearProgress variant="determinate" value={100 * (job.progress || 0)} sx={{ mb: 1 }} />
+            <CurtainPlot result={live} halfWindowFt={sectionFt} />
+            <Typography variant="caption" color="text.secondary">
+              {live.model.layers.map((l, i) => `Layer ${i + 1}: Rh ${l.rh.toFixed(1)} / Rv ${l.rv.toFixed(1)} Ω·m`).join(' · ')}
+              {` · dip ${live.model.dip_deg}°`}
+            </Typography>
+          </Card>
+        )}
+        {!result && !live && (
           <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>
             {!run ? 'Pick a run, select curves on the QC page, then run the inversion here.'
               : jobActive ? 'Inversion running. A 400 ft interval at 4 ft steps takes a few minutes.'
@@ -308,8 +326,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 </TableBody>
               </Table>
             </Card>
-            <Card title="Curtain section" extra="layers coloured by Rh (blue conductive → red resistive)">
-              <CurtainPlot result={result} />
+            <Card title="Curtain section" extra={`layers coloured by Rh (blue conductive → red resistive) · ±${sectionFt} ft around the well`}>
+              <CurtainPlot result={result} halfWindowFt={sectionFt} />
             </Card>
             <Card title="Measured vs modelled" extra="bold = used in the fit; faint = shown for comparison">
               <FormControlLabel control={<Switch size="small" checked={showAll}

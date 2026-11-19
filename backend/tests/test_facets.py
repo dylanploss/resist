@@ -21,7 +21,10 @@ class FacetPlanTests(unittest.TestCase):
         self.assertNotIn("ZGM112PL", used)                   # left = -right for a geosignal
         self.assertEqual(used["ZRM48AL"]["weight"], used["ZRM48AT"]["weight"])
         reasons = {i["curve"]: i["reason"] for i in plan["ignored"]}
-        self.assertIn("long-spacing", reasons["ZRM50P"])
+        # Long-spacing images use the guessed geometry at reduced weight, and get right/left quadrants too.
+        self.assertEqual(plan["_sources"]["ZRM50PR"], ("ZRM50P", "R"))
+        self.assertTrue(used["ZRM50PL"]["guessed_geometry"])
+        self.assertLess(used["ZRM50PT"]["weight"], used["ZRM32PT"]["weight"])
         self.assertFalse(any("left/right" in r for r in reasons.values()))
 
     def test_warns_without_right_left_quadrants(self):

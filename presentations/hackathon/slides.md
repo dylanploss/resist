@@ -26,45 +26,44 @@ title: What we built
 
 # What we built
 
-<div class="grid grid-cols-2 gap-6 text-sm pt-2">
-<div>
+<div class="grid grid-cols-5 gap-5 text-sm pt-1">
+<div class="col-span-2">
 
 <div class="font-bold pb-1">The problem</div>
 
-- 10 Ekofisk wells, 11 DLIS runs of ADR resistivity + geosignal
-- ~50 candidate curves per run — which ones are fit to invert?
-- Inversion tools are slow, opaque and desktop-bound
+- 10 Ekofisk wells, 11 DLIS runs, ~50 curves each
+- Which curves are fit to invert? Where do they see?
 
-<div class="font-bold pt-4 pb-1">Our answer</div>
+<div class="font-bold pt-3 pb-1">Our answer: one web app</div>
 
-- One web app from raw DLIS to inversion
-- QC picks **5–10 curves** with a reason for every keep and drop
-- 1D forward model and inversion run **in the browser**
+| Tab | What you get |
+|-----|--------------|
+| QC | Picks **5–10 curves**, a reason for each |
+| Inversion | 1.5D layered model, curtain, log fit |
+| Modelling | UDAR 1D model in the browser |
+| 3D well | Real well path, DOI-sized tube |
 
 </div>
-<div>
+<div class="col-span-3">
 
-<div class="font-bold pb-1">The platform</div>
+<img src="/well3d-compare.png" class="w-full h-80 object-cover object-left rounded border border-gray-300" />
 
-| Step | What you get |
-|------|--------------|
-| Data | Curve inventory, curves vs depth |
-| QC | Ranked table, DOI-noise scatter, depth tracks |
-| Modelling | UDAR 1D forward model and inversion |
-| 3D well | Curve on the well path, DOI-sized tube *(in progress)* |
+<div class="text-xs opacity-70 pt-1">Z-19 · shallow ARH16P (solid) inside deep ZRL48A (shell) · the tube is the estimated depth of investigation</div>
 
 </div>
 </div>
 
 <!--
-~1 min 30 s.
-- Data: FastAPI backend reads the DLIS files directly and exposes runs, curve inventory and curve data.
-- QC: scores each curve, keeps 5–10, explains every rejection; stable JSON contract between backend and UI.
-- Modelling: unchanged copy of the UDAR_Bench compute core running in a web worker.
-- 3D well: one QC curve drawn along the real UTM/TVD path with the same colour scale as the QC tab.
-  Tube thickness follows the curve's QC depth of investigation, so deep curves show a wider sensed volume
-  (an estimate scaled from the relative DOI index, not a measured reach).
-Update this slide as features land.
+~1 min.
+- Data: FastAPI reads the DLIS files directly; runs, curve inventory and curve data.
+- QC: scores every curve, keeps 5–10, explains every rejection.
+- Inversion: windowed Levenberg-Marquardt 1.5D fit of the QC selection: layered model, curtain section, measured vs modelled logs.
+- Modelling: unchanged copy of the UDAR_Bench compute core in a web worker.
+- 3D well: the curve along the real UTM/TVD path in the QC colours. The tube radius is a per-sample
+  DOI estimate: skin depth 503·√(ρ/f), soft cap at 3 spacings. For 32-bin images it bulges toward
+  the resistive (red) bins; ZG geosignals borrow that shape from the matching ZR image.
+- Picture: Compare with: the shallower curve is the solid inner tube, the deeper one the transparent shell.
+Say: "The DOI is a physics estimate, not a vendor figure."
 -->
 
 ---
@@ -73,39 +72,51 @@ title: How it works and what's next
 
 # How it works · what's next
 
-<div class="grid grid-cols-2 gap-6 text-sm pt-2">
-<div>
+<div class="grid grid-cols-5 gap-5 text-sm pt-1">
+<div class="col-span-2">
 
 <div class="font-bold pb-1">How it works</div>
 
 - **Backend:** Python + FastAPI on the real DLIS files
-- **Frontend:** React + Material UI, compute in a web worker
+- **Frontend:** React, Material UI, three.js
 - **Physics:** 1D layered VTI model at the true tool position
-- **Speed:** milliseconds per station vs minutes for 2.5D
+- **3D:** inversion layers glow magenta where the DOI reaches them
+
+<div class="font-bold pt-3 pb-1">What's next</div>
+
+- Inversion over all 11 runs, stitched windows
+- 32-bin images reduced to mean, amplitude, phase
+- Vendor DOI figures instead of the estimate
 
 </div>
-<div>
+<div class="col-span-3 flex flex-col gap-2">
 
-<div class="font-bold pb-1">What's next</div>
+<img src="/well3d-layers.png" class="w-full h-38 object-cover rounded border border-gray-300" />
 
-- Windowed Levenberg-Marquardt inversion over all 11 runs
-- 32-bin azimuthal images reduced to mean, amplitude, phase
-- Borehole image wrapped around the 3D well
-- Several wells and horizons in one 3D scene
+<img src="/well3d-field.png" class="w-full h-38 object-cover rounded border border-gray-300" />
 
 </div>
 </div>
 
-<div class="pt-10 text-center text-base">
+<div class="pt-3 text-center text-base">
 
-**Demo →** QC selection → Modelling → 3D well
+**Live demo →** QC → Inversion → 3D: ★ Demo · Compare · Layers · Field
 
 </div>
 
 <!--
-~1 min 30 s including the live demo hand-over.
+~30 s, then ~2 min live demo. Total ≈ 4 min.
+Demo flow:
+1. QC selection: open VC-2, show the ranked table and the kept curves; click "Invert this selection →".
+2. Inversion: MD 17202–17322 ft, 3 layers; show the layered model and measured vs modelled logs.
+   (Run it before the talk too: jobs live in backend memory.)
+3. 3D well on Z-19, ZRL48A: press ★ Demo; the captions stop at the conductive and resistive zones
+   and TD. Escape stops it.
+4. Compare with ARH16P: shallow solid tube inside the deep shell.
+5. Switch to VC-2: Inversion layers on; the magenta glow is where a boundary is inside the DOI,
+   and the panel reads the nearest-boundary distance.
+6. Field: all 11 runs at their UTM positions; click a well to open it. Save PNG if asked.
 - 1D is exact for planar beds at oblique tool angles; dip comes from the well trajectory.
-- Harmonic reduction is 32:3 data reduction while keeping the physics.
 - Full 11-run inversion estimated at 1–8 hours on a laptop with 50 % window overlap.
-Close: "From raw DLIS to a trusted, invertible curve set — in the browser."
+Close: "From raw DLIS to a trusted curve set, an inverted model and a 3D picture of what the tool sees — in the browser."
 -->

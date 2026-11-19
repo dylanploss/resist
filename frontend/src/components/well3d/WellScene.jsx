@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import { CameraControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { buildTube, buildTexture, frameAt } from './path.js'
+import ShellTube from './ShellTube.jsx'
 import { useTravel } from './useTravel.js'
 
 const MARKER_COLOR = '#ffb300'
@@ -111,7 +112,9 @@ function Rig({ api, path, radius, travel }) {
   useImperativeHandle(api, () => ({ zoom, fit }))
 
   const onPath = useEffectEvent(() => travel.mode !== 'follow' && fit())
-  useEffect(() => onPath(), [path])
+  useEffect(() => {
+    onPath()
+  }, [path])
 
   return (
     <>
@@ -127,16 +130,19 @@ function Rig({ api, path, radius, travel }) {
 // Coloured tube along the well path with a travel marker, depth ticks and a north arrow.
 // `ref` exposes { zoom(factor), fit() }; travel holds { md, mdEnd, playing, speed, mode, onMd, onEnd }.
 // radius is the outer (largest) tube radius used for ticks, marker and camera; radii, when given,
-// is one tube radius per sample.
-export default function WellScene({ ref, data, path, radius, radii, active, travel }) {
+// is one tube radius per sample. shell, when given, is { data, radii } for a transparent outer tube.
+// `children` are extra scene objects (e.g. inversion layers).
+export default function WellScene({ ref, data, path, radius, radii, shell, active, travel, children }) {
   return (
     <Canvas flat frameloop={active ? 'always' : 'never'} dpr={[1, 2]}
       camera={{ fov: 45, near: 0.5, far: 1e6, position: [0, 500, 1500] }}
-      gl={{ antialias: true }} style={{ background: '#f5f7fa' }}>
+      gl={{ antialias: true, preserveDrawingBuffer: true }} style={{ background: '#f5f7fa' }}>
       <WellTube data={data} path={path} radius={radii ?? radius} />
+      {shell && <ShellTube data={shell.data} path={path} radius={shell.radii} />}
       <DepthTicks path={path} radius={radius} />
       <NorthArrow path={path} />
       <Rig api={ref} path={path} radius={radius} travel={travel} />
+      {children}
     </Canvas>
   )
 }
