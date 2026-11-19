@@ -1,44 +1,67 @@
-import { useEffect, useState } from 'react'
-import { Alert, AppBar, Box, Container, Toolbar, Typography } from '@mui/material'
-import CurveInventory from './components/CurveInventory.jsx'
-import QcSelection from './components/QcSelection.jsx'
+import { Suspense, lazy, useState } from 'react'
+import { AppBar, Box, Container, CssBaseline, LinearProgress, Tab, Tabs, ThemeProvider, Toolbar, Typography, createTheme } from '@mui/material'
+import { getRuns } from './api.js'
+import { useApi } from './hooks/useApi.js'
+import DataPage from './pages/DataPage.jsx'
+import OverviewPage from './pages/OverviewPage.jsx'
+import QcPage from './pages/QcPage.jsx'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const ModellingPage = lazy(() => import('./pages/ModellingPage.jsx'))
+
+const theme = createTheme({ palette: { primary: { main: '#2a78d6' } } })
+
+const PAGES = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'data', label: 'Data' },
+  { id: 'qc', label: 'QC selection' },
+  { id: 'udar', label: 'Modelling (UDAR)' },
+]
 
 function App() {
-  const [health, setHealth] = useState({ state: 'loading' })
+  const [page, setPage] = useState('overview')
+  const [udarOpened, setUdarOpened] = useState(false)
+  const [run, setRun] = useState('')
+  const runs = useApi(getRuns, 'runs')
 
-  useEffect(() => {
-    fetch(`${API_URL}/health`)
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.json()
-      })
-      .then((body) => setHealth({ state: 'ok', status: body.status }))
-      .catch((error) => setHealth({ state: 'error', message: error.message }))
-  }, [])
+  const openPage = (v) => {
+    setPage(v)
+    if (v === 'udar') setUdarOpened(true)
+  }
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
-      <AppBar position="static">
-        <Toolbar>
-          <Typography variant="h6">Resist QC and Inversion</Typography>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AppBar position="sticky">
+        <Toolbar sx={{ gap: 3 }}>
+          <Typography variant="h6" sx={{ whiteSpace: 'nowrap' }}>
+            Resist QC and Inversion
+          </Typography>
+          <Tabs value={page} onChange={(e, v) => openPage(v)} textColor="inherit" indicatorColor="secondary" aria-label="Pages">
+            {PAGES.map((p) => (
+              <Tab key={p.id} value={p.id} label={p.label} />
+            ))}
+          </Tabs>
         </Toolbar>
       </AppBar>
-      <Container sx={{ py: 3 }}>
-        {health.state === 'loading' && <Alert severity="info">Checking backend…</Alert>}
-        {health.state === 'ok' && <Alert severity="success">Backend status: {health.status}</Alert>}
-        {health.state === 'error' && (
-          <Alert severity="error">Backend not reachable: {health.message}</Alert>
-        )}
-        <Box sx={{ mt: 3 }}>
-          <CurveInventory />
+      <Container maxWidth={false} sx={{ py: 2 }}>
+        <Box hidden={page !== 'overview'}>
+          <OverviewPage runs={runs} />
         </Box>
-        <Box sx={{ mt: 3 }}>
-          <QcSelection />
+        <Box hidden={page !== 'data'}>
+          <DataPage runs={runs} run={run} onRunChange={setRun} />
+        </Box>
+        <Box hidden={page !== 'qc'}>
+          <QcPage runs={runs} run={run} onRunChange={setRun} />
+        </Box>
+        <Box hidden={page !== 'udar'}>
+          {udarOpened && (
+            <Suspense fallback={<LinearProgress />}>
+              <ModellingPage />
+            </Suspense>
+          )}
         </Box>
       </Container>
-    </Box>
+    </ThemeProvider>
   )
 }
 
