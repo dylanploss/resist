@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "tenant_id": "704b7209-73fa-43f5-8e84-21cd65fe5697",
+  "subscription_id": "2668e2c1-a6ab-42da-8bcf-edd50a6fc470",
+  "resource_group": "resist-hackathon-rg",
+  "account": "resist-graph-olnz",
+  "region": "Sweden Central",
+  "capacity": "serverless",
+  "endpoint": "wss://resist-graph-olnz.gremlin.cosmos.azure.com:443/",
+  "database": "resist",
+  "graph": "inversions",
+  "partition_key": "/pk",
+  "public_network_access": "Disabled (tenant policy SFI-NS2.2.1)"
+}

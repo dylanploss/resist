@@ -27,7 +27,10 @@ def no_data(monkeypatch, tmp_path: Path):
 def test_health_returns_ok() -> None:
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["store"] in ("snapshot", "memory", "cosmos")
+    assert "cosmos" in body
 
 
 def test_runs_lists_dlis_files(real_data) -> None:

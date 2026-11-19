@@ -22,6 +22,7 @@ class InversionRequest(BaseModel):
     window_ft: float = Field(service.DEFAULT_WINDOW_FT, ge=2.0, le=200.0)
     rh_min_ohmm: float = Field(0.1, gt=0.0, le=10000.0)
     rh_max_ohmm: float = Field(1000.0, gt=0.0, le=10000.0)
+    force: bool = False   # recompute even when the store already has this request
 
     @model_validator(mode="after")
     def check_interval(self):
@@ -58,7 +59,7 @@ def plan(request: InversionRequest) -> dict:
 def submit(request: InversionRequest) -> dict:
     well_run = runs.get_run(request.run)
     try:
-        job = service.submit(request.run, well_run, request.model_dump())
+        job = service.submit(request.run, well_run, request.model_dump(exclude={"force"}), force=request.force)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return job.to_dict()

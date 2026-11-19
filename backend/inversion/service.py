@@ -18,16 +18,22 @@ The QC page picks curves; this module maps them onto the 1.5D forward model (``b
 Jobs run one at a time in a background thread because each uses a process pool. The interval is cut into slices
 (default 4 ft); each slice is a separate 1.5D fit on a sliding data window centred on it (default 20 ft), warm-started
 from its neighbour, so neighbouring windows overlap and the curtain can show their mean.
+
+Finished inversions are kept in the inversion store (``backend.inversion.store``: the shared Cosmos DB graph, or
+memory + the committed snapshot). A job id is the first 12 characters of the request **fingerprint**, so a repeated
+request is answered from the store (``source: "graph"``) without computing, unless ``force`` is set.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import re
 import threading
 import time
+import hashlib
+import json
 from types import SimpleNamespace
-import uuid
 
 import numpy as np
 
@@ -35,6 +41,7 @@ from backend.inversion.adr_forward import FT, FREQ_LETTER, LS_RECEIVER_IN, ADRFo
 from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
                                       default_starts, interval_from_run, noise_estimate, worker_pool)
 
+log = logging.getLogger("resist.inversion")
 AR_CURVE = re.compile(r"^AR([HML])(\d+)([PA])(C?)$")
 ZR_CURVE = re.compile(r"^ZR([HML])(\d+)([PA])([TBLR]?)$")
 ZG_CURVE = re.compile(r"^ZG([HML])(\d+)([PA])$")
@@ -52,6 +59,11 @@ DEFAULT_SLICE_FT = 4.0
 DEFAULT_WINDOW_FT = 20.0
 MAX_SLICES = 300
 MIN_WINDOW_STATIONS = 3
+# Bump when the inversion code changes its results: repeated requests then recompute and supersede the old ones.
+# "2": quadrant sectors, per-slice sliding-window fits with warm starts, Rh fit bounds.
+INVERSION_VERSION = "2"
+# Request fields that never change the result; every other field of the validated request is fingerprinted.
+NON_RESULT_FIELDS = frozenset({"force"})
 
 # The 2 MHz attenuation bias is a property of the channel, so it applies to its top/bottom bins too.
 ATTENUATION_CORRECTION = {**Z20_ATTENUATION_CORRECTION,
@@ -171,13 +183,18 @@ class Job:
     started: float | None = None
     finished: float | None = None
     partial: dict | None = None        # best model so far while running (live cross-section)
+    source: str = "computed"           # "computed" (run in this backend) | "graph" (read from the store)
+    fingerprint: str | None = None
+    request_key: str | None = None
+    force: bool = False
+    summary: dict | None = None        # listing info when the result is not loaded
 
     def to_dict(self) -> dict:
         end = self.finished or time.time()
         return {"id": self.id, "run": self.run, "status": self.status, "progress": round(self.progress, 3),
                 "message": self.message, "request": self.request, "plan": public_plan(self.plan),
                 "error": self.error, "elapsed_s": round(end - (self.started or end), 1), "result": self.result,
-                "partial": self.partial if self.status == "running" else None}
+                "partial": self.partial if self.status == "running" else None, "source": self.source}
 
 
 def public_plan(plan: dict) -> dict:
@@ -189,11 +206,68 @@ _jobs_lock = threading.Lock()
 _slot = threading.Semaphore(1)
 
 
-def submit(run_id: str, run, request: dict) -> Job:
+def _canonical(value) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def canonical_request(run_id: str, request: dict) -> dict:
+    """The request validated by the API model with its defaults filled in, minus fields that do not change the result,
+    so every result-affecting field (including ones added later) is part of the fingerprint."""
+    from backend.inversion.api import InversionRequest   # api imports this module
+    body = InversionRequest(**{**request, "run": run_id}).model_dump(exclude=set(NON_RESULT_FIELDS))
+    body["curves"] = sorted(body["curves"])
+    return body
+
+
+def fingerprint(run_id: str, request: dict, plan: dict, version: str | None = None) -> tuple[str, str]:
+    """(fingerprint, request_key): sha256 of the canonical request + used labels/weights, with/without the version."""
+    body = {**canonical_request(run_id, request),
+            "plan": sorted([e["label"], float(e["weight"])] for e in plan["used"])}
+    request_key = hashlib.sha256(_canonical(body).encode()).hexdigest()
+    fp = hashlib.sha256(_canonical({**body, "version": version or INVERSION_VERSION}).encode()).hexdigest()
+    return fp, request_key
+
+
+def _store():
+    from backend.inversion import store
+    return store.get_store()
+
+
+def job_from_record(rec: dict) -> Job:
+    job = Job(rec["job_id"], rec["run"], rec["request"], rec.get("plan") or {}, status="done", progress=1.0,
+              message="loaded from the inversion graph", result=rec.get("result"), created=rec.get("created") or 0,
+              started=rec.get("started"), finished=rec.get("finished"), source="graph",
+              fingerprint=rec["fingerprint"], request_key=rec.get("request_key"), summary=rec.get("summary"))
+    return job
+
+
+def record_from_job(job: Job, supersedes: list[str]) -> dict:
+    return {"fingerprint": job.fingerprint, "job_id": job.id, "run": job.run, "version": INVERSION_VERSION,
+            "request_key": job.request_key, "request": job.request, "plan": public_plan(job.plan),
+            "result": job.result, "created": job.created, "started": job.started, "finished": job.finished,
+            "supersedes": supersedes, "superseded": False}
+
+
+def submit(run_id: str, run, request: dict, force: bool = False) -> Job:
+    request = {k: v for k, v in request.items() if k != "force"}
     plan = build_plan(run, request["curves"], request["calibration"])
     if not plan["used"]:
         raise ValueError("none of the selected curves can be inverted; select AR, ZR (16/32/48 in) or ZG curves in QC")
-    job = Job(uuid.uuid4().hex[:12], run_id, request, plan)
+    fp, request_key = fingerprint(run_id, request, plan)
+    job_id = fp[:12]
+    with _jobs_lock:
+        active = _jobs.get(job_id)
+        if active is not None and active.status in ("queued", "running"):
+            return active                              # same request already computing
+    if not force:
+        try:
+            rec = _store().find(fp, run=run_id)
+        except Exception as exc:                       # store down: compute instead of failing the request
+            rec = None
+            log.warning("inversion store lookup failed: %s", type(exc).__name__)
+        if rec is not None:
+            return job_from_record(rec)
+    job = Job(job_id, run_id, request, plan, fingerprint=fp, request_key=request_key, force=force)
     with _jobs_lock:
         _jobs[job.id] = job
     threading.Thread(target=_execute, args=(job, run), daemon=True).start()
@@ -202,14 +276,46 @@ def submit(run_id: str, run, request: dict) -> Job:
 
 def get(job_id: str) -> Job | None:
     with _jobs_lock:
-        return _jobs.get(job_id)
+        job = _jobs.get(job_id)
+    if job is not None:
+        return job
+    try:
+        rec = _store().get(job_id)
+    except Exception as exc:
+        log.warning("inversion store read failed: %s", type(exc).__name__)
+        return None
+    return job_from_record(rec) if rec else None
 
 
 def finished_jobs(run_id: str) -> list[Job]:
-    """Completed jobs of a run, newest first."""
+    """Completed jobs of a run, newest first: the store's newest versions plus done jobs of this process."""
     with _jobs_lock:
-        done = [j for j in _jobs.values() if j.run == run_id and j.status == "done"]
-    return sorted(done, key=lambda j: j.finished or 0, reverse=True)
+        local = {j.id: j for j in _jobs.values() if j.run == run_id and j.status == "done"}
+    try:
+        stored = [job_from_record(r) for r in _store().list_finished(run_id)]
+    except Exception as exc:
+        log.warning("inversion store listing failed: %s", type(exc).__name__)
+        stored = []
+    merged = {j.id: j for j in stored}
+    merged.update(local)
+    return sorted(merged.values(), key=lambda j: j.finished or 0, reverse=True)
+
+
+def save_result(job: Job) -> str:
+    """Store a finished job (force replaces, older versions get superseded); returns a message suffix."""
+    if job.fingerprint is None or job.result is None:
+        return ""
+    st = _store()
+    if job.force:
+        st.delete(job.fingerprint, run=job.run)
+    older = [fp for fp in st.older_versions(job.run, job.request_key, INVERSION_VERSION) if fp != job.fingerprint]
+    info = st.save(record_from_job(job, older)) or {}
+    parts = [f"saved to the {st.kind} store"]
+    if older:
+        parts.append(f"supersedes {len(older)} older version(s)")
+    if info.get("observed_updated"):
+        parts.append(f"{info['observed_updated']} stored observations differed and were updated")
+    return "; ".join(parts)
 
 
 def _execute(job: Job, run) -> None:
@@ -217,11 +323,19 @@ def _execute(job: Job, run) -> None:
         job.status, job.started, job.message = "running", time.time(), "loading interval"
         try:
             job.result = run_inversion(run, job.request, job.plan, job)
-            job.status, job.progress, job.message = "done", 1.0, "finished"
         except Exception as exc:  # reported to the client, not raised in the thread
             job.status, job.error, job.message = "error", f"{type(exc).__name__}: {exc}", "failed"
-        finally:
             job.finished = time.time()
+            return
+        job.finished = time.time()
+        job.progress, job.message = 0.99, "saving to the inversion store"
+        try:
+            note = save_result(job)
+        except Exception as exc:  # the result is still served from memory
+            log.warning("could not save inversion %s: %s: %s", job.id, type(exc).__name__, str(exc)[:200])
+            note = f"not saved to the store ({type(exc).__name__})"
+        job.status, job.progress = "done", 1.0
+        job.message = "finished" + (f"; {note}" if note else "")
 
 
 def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dict:

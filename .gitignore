@@ -24,3 +24,6 @@ out/
 *.html
 !frontend/index.html
 .env
+
+# Inversion snapshot: committed; temp files from the atomic write are not
+data/graph/.inversions-*.tmp

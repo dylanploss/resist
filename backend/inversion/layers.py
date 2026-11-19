@@ -62,7 +62,12 @@ def boundary_geometry(result: dict) -> dict:
 def job_summary(job) -> dict:
     """Compact listing entry for a finished job (no result payload)."""
     req = job.request
+    summary = getattr(job, "summary", None) or {}
+    if job.result is not None:
+        stations = job.result.get("stations")
+        boundaries = len(job.result.get("model", {}).get("boundary_tvd_ft", []))
+    else:
+        stations, boundaries = summary.get("stations"), summary.get("boundaries") or 0
     return {"id": job.id, "run": job.run, "status": job.status, "finished": job.finished,
             "md_min_ft": req["md_min_ft"], "md_max_ft": req["md_max_ft"], "layers": req["layers"],
-            "stations": (job.result or {}).get("stations"),
-            "boundaries": len((job.result or {}).get("model", {}).get("boundary_tvd_ft", []))}
+            "stations": stations, "boundaries": boundaries, "source": getattr(job, "source", "computed")}
