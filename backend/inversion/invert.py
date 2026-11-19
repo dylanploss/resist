@@ -240,8 +240,15 @@ def _init_worker(receiver_sep_in, traj, azimuthal=False, options=None):
     _TRAJ = traj
 
 
-def _predict(model: LayerModel):
-    return _FWD.predict(model, _TRAJ)
+def _predict(task):
+    model, idx = task if isinstance(task, tuple) else (task, None)
+    return _FWD.predict(model, _TRAJ if idx is None else _TRAJ.subset(idx))
+
+
+def worker_pool(traj: Trajectory, workers: int, receiver_sep_in=8.0, azimuthal=False, options=None):
+    """A pool on the full trajectory, shared by Inverters of sub-windows (``Inverter(pool=..., station_idx=...)``)."""
+    return ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
+                               initargs=(receiver_sep_in, traj, azimuthal, options))
 
 
 @dataclass
@@ -277,7 +284,8 @@ class FitResult:
 class Inverter:
     """Parallel finite-difference Levenberg-Marquardt (trust-region) fit for one window."""
 
-    def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None):
+    def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None,
+                 pool=None, station_idx=None):
         self.data, self.cfg = data, cfg
         self.on_eval = on_eval
         az = float(np.rad2deg(np.arctan2(data.traj.axis[:, 1].mean(), data.traj.axis[:, 0].mean())))
@@ -286,13 +294,15 @@ class Inverter:
         w = cfg.curve_weights or {}
         sig = cfg.curve_sigma or {}
         self.w = np.array([float(w.get(lab, 1.0)) / float(sig.get(lab, cfg.sigma)) for lab in data.labels])
-        self.pool = ProcessPoolExecutor(max_workers=workers or min(16, self.lay.n_earth + 1),
-                                        initializer=_init_worker,
-                                        initargs=(receiver_sep_in, data.traj, cfg.azimuthal, cfg.forward_options))
+        self._owns_pool = pool is None
+        self.station_idx = None if station_idx is None else np.asarray(station_idx)
+        self.pool = pool or worker_pool(data.traj, workers or min(16, self.lay.n_earth + 1), receiver_sep_in,
+                                        cfg.azimuthal, cfg.forward_options)
         self._cache = {}
 
     def close(self):
-        self.pool.shutdown()
+        if self._owns_pool:
+            self.pool.shutdown()
 
     def __enter__(self):
         return self
@@ -305,7 +315,9 @@ class Inverter:
         todo = [(k, x) for k, x in zip(keys, xs) if k not in self._cache]
         uniq = dict(todo)
         if uniq:
-            for k, p in zip(uniq, self.pool.map(_predict, [self.lay.model(x) for x in uniq.values()])):
+            tasks = [self.lay.model(x) if self.station_idx is None else (self.lay.model(x), self.station_idx)
+                     for x in uniq.values()]
+            for k, p in zip(uniq, self.pool.map(_predict, tasks)):
                 self._cache[k] = p
         if len(self._cache) > 64:
             for k in list(self._cache)[:-32]:

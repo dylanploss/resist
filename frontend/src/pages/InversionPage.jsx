@@ -12,7 +12,7 @@ import RunPicker from '../components/RunPicker.jsx'
 import CurtainPlot from '../components/inversion/CurtainPlot.jsx'
 import InversionTracks from '../components/inversion/InversionTracks.jsx'
 
-const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false, sectionFt: '15' }
+const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false, sectionFt: '15', sliceFt: '4', windowFt: '20' }
 const ACTIVE = ['queued', 'running']
 
 export function Card({ title, extra, children }) {
@@ -142,6 +142,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const [job, setJob] = useState(null)
   const [submitError, setSubmitError] = useState(null)
   const [showAll, setShowAll] = useState(false)
+  const [curtainView, setCurtainView] = useState('both')
 
   const settings = useMemo(() => settingsByRun[run] ?? (defaults.data
     ? { ...BASE_SETTINGS, mdMin: String(defaults.data.md_min_ft), mdMax: String(defaults.data.md_max_ft) } : null),
@@ -151,6 +152,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const request = useMemo(() => (settings && qcCurves.curves.length ? {
     run, curves: qcCurves.curves, md_min_ft: Number(settings.mdMin), md_max_ft: Number(settings.mdMax),
     step_ft: settings.step, layers: settings.layers, calibration: settings.calibration, quick: settings.quick,
+    slice_ft: Number(settings.sliceFt ?? 4), window_ft: Number(settings.windowFt ?? 20),
   } : null), [run, qcCurves.curves, settings])
   const planKey = request ? JSON.stringify(request) : null
 
@@ -174,7 +176,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   }, [jobId, jobActive, job])
 
   const currentPlan = plan.key === planKey ? plan.body : null
-  const tooMany = currentPlan && defaults.data && currentPlan.estimated_stations > defaults.data.max_stations
+  const tooMany = currentPlan && defaults.data && (currentPlan.estimated_stations > defaults.data.max_stations
+    || currentPlan.estimated_slices > defaults.data.max_slices)
   const canRun = Boolean(request && currentPlan && currentPlan.used.length && !jobActive && !tooMany)
 
   const start = () => {
@@ -238,6 +241,14 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 <FormControlLabel sx={{ gridColumn: '1 / -1' }} control={
                   <Switch checked={settings.quick} onChange={(e) => update({ quick: e.target.checked })} />}
                   label="Quick (fewer iterations)" />
+                <TextField size="small" label="Slice width (ft)" type="number"
+                  value={settings.sliceFt ?? '4'} slotProps={{ htmlInput: { min: 1, step: 1 } }}
+                  helperText="one model per slice"
+                  onChange={(e) => update({ sliceFt: e.target.value })} />
+                <TextField size="small" label="Data window (ft)" type="number"
+                  value={settings.windowFt ?? '20'} slotProps={{ htmlInput: { min: 2, step: 1 } }}
+                  helperText="sliding, centred on each slice"
+                  onChange={(e) => update({ windowFt: e.target.value })} />
                 <TextField size="small" label="Section ± ft around well" type="number" sx={{ gridColumn: '1 / -1' }}
                   value={settings.sectionFt ?? '15'} slotProps={{ htmlInput: { min: 1, step: 1 } }}
                   helperText="TVD band shown in the cross-sections (display only)"
@@ -251,8 +262,9 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
             )}
             {currentPlan && (
               <Typography variant="caption" color={tooMany ? 'error' : 'text.secondary'} component="div">
-                About {currentPlan.estimated_stations} stations
-                {tooMany ? ` (max ${defaults.data.max_stations}: shorten the interval or increase the step)` : ''}
+                About {currentPlan.estimated_stations} stations, {currentPlan.estimated_slices} slices,
+                {` ~${currentPlan.stations_per_window} stations per data window`}
+                {tooMany ? ` (max ${defaults.data.max_stations} stations / ${defaults.data.max_slices} slices: shorten the interval or increase the step/slice)` : ''}
               </Typography>
             )}
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5 }}>
@@ -275,20 +287,16 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
 
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
         {live && (
-          <Card title="Live cross-section" extra={`best model so far · ${live.stage} stage · evaluation ${live.evaluation}`
-            + ` · misfit/noise ${live.misfit_normalised} · ±${sectionFt} ft around the well`}>
+          <Card title="Live curtain section" extra={`slice ${live.slice} of ${live.n_slices} · evaluation ${live.evaluation}`
+            + ` · last slice misfit/noise ${live.misfit_normalised} · ±${sectionFt} ft around the well`}>
             <LinearProgress variant="determinate" value={100 * (job.progress || 0)} sx={{ mb: 1 }} />
-            <CurtainPlot result={live} halfWindowFt={sectionFt} />
-            <Typography variant="caption" color="text.secondary">
-              {live.model.layers.map((l, i) => `Layer ${i + 1}: Rh ${l.rh.toFixed(1)} / Rv ${l.rv.toFixed(1)} Ω·m`).join(' · ')}
-              {` · dip ${live.model.dip_deg}°`}
-            </Typography>
+            <CurtainPlot result={live} halfWindowFt={sectionFt} view={curtainView} onViewChange={setCurtainView} />
           </Card>
         )}
         {!result && !live && (
           <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>
             {!run ? 'Pick a run, select curves on the QC page, then run the inversion here.'
-              : jobActive ? 'Inversion running. A 400 ft interval at 4 ft steps takes a few minutes.'
+              : jobActive ? 'Inversion running. The curtain appears after the first slice; a 400 ft interval at 4 ft steps takes several minutes.'
                 : 'Check the curves and interval on the left, then press Run inversion.'}
           </Paper>
         )}
@@ -326,8 +334,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 </TableBody>
               </Table>
             </Card>
-            <Card title="Curtain section" extra={`layers coloured by Rh (blue conductive → red resistive) · ±${sectionFt} ft around the well`}>
-              <CurtainPlot result={result} halfWindowFt={sectionFt} />
+            <Card title="Curtain section" extra={`${result.slices?.length ?? 0} slices of ${result.slice_ft} ft, each fitted on a ${result.window_ft} ft sliding window · Rh blue conductive → red resistive · ±${sectionFt} ft around the well`}>
+              <CurtainPlot result={result} halfWindowFt={sectionFt} view={curtainView} onViewChange={setCurtainView} />
             </Card>
             <Card title="Measured vs modelled" extra="bold = used in the fit; faint = shown for comparison">
               <FormControlLabel control={<Switch size="small" checked={showAll}

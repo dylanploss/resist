@@ -18,6 +18,8 @@ class InversionRequest(BaseModel):
     layers: int = Field(3, ge=1, le=4)
     calibration: bool = True
     quick: bool = False
+    slice_ft: float = Field(service.DEFAULT_SLICE_FT, ge=1.0, le=50.0)
+    window_ft: float = Field(service.DEFAULT_WINDOW_FT, ge=2.0, le=200.0)
 
     @model_validator(mode="after")
     def check_interval(self):
@@ -25,6 +27,8 @@ class InversionRequest(BaseModel):
             raise ValueError("md_max_ft must be greater than md_min_ft")
         if self.md_max_ft - self.md_min_ft > service.MAX_INTERVAL_FT:
             raise ValueError(f"interval longer than {service.MAX_INTERVAL_FT:.0f} ft")
+        if self.window_ft < self.slice_ft:
+            raise ValueError("window_ft must be at least slice_ft")
         return self
 
 
@@ -32,7 +36,8 @@ class InversionRequest(BaseModel):
 def defaults(run: str) -> dict:
     well_run = runs.get_run(run)
     return {"run": run, **service.suggested_interval(well_run), "channels": service.channel_labels(),
-            "max_stations": service.MAX_STATIONS, "max_interval_ft": service.MAX_INTERVAL_FT}
+            "max_stations": service.MAX_STATIONS, "max_interval_ft": service.MAX_INTERVAL_FT,
+            "slice_ft": service.DEFAULT_SLICE_FT, "window_ft": service.DEFAULT_WINDOW_FT, "max_slices": service.MAX_SLICES}
 
 
 @router.post("/plan")
@@ -40,7 +45,9 @@ def plan(request: InversionRequest) -> dict:
     well_run = runs.get_run(request.run)
     span = request.md_max_ft - request.md_min_ft
     return {**service.public_plan(service.build_plan(well_run, request.curves, request.calibration)),
-            "estimated_stations": int(span // request.step_ft) + 1}
+            "estimated_stations": int(span // request.step_ft) + 1,
+            "estimated_slices": len(service.slice_centres(request.md_min_ft, request.md_max_ft, request.slice_ft)),
+            "stations_per_window": int(request.window_ft // request.step_ft) + 1}
 
 
 @router.post("/jobs")
