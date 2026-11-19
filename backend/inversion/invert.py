@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import least_squares
 
+from backend.data.quadrants import quadrant
 from backend.inversion.adr_forward import FT, ADRForward, LayerModel, Trajectory
 
 DEFAULT_REFERENCE = ("ARH16P", "ARH32P", "ARH48P", "ARM16P", "ARM32P", "ARM48P", "ARL48P")
@@ -79,9 +80,12 @@ def azimuthal_average(image):
 
 
 def _source_values(c, src, idx):
-    """A source is a curve name, or (image name, bin index) for one azimuthal bin."""
+    """A source is a curve name, ``(image, bin index)`` for one bin, or ``(image, side)`` for a quadrant sector."""
     if isinstance(src, tuple):
-        return np.asarray(c[src[0]][idx], float)[:, src[1]]
+        image = np.asarray(c[src[0]][idx], float)
+        if isinstance(src[1], str):
+            return quadrant(image, src[1], resistivity=src[0].startswith("ZR"))
+        return image[:, src[1]]
     return azimuthal_average(c[src][idx])
 
 
@@ -93,8 +97,8 @@ def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources
     """Interval data for a loaded WellRun.
 
     ``sources`` maps each forward-model label to its delivered data: a curve name (``ARH16P``, ``ARH16PC``,
-    ``ZRH16PT``; a 32-bin image such as ``ZRH16P`` is reduced by ``azimuthal_average``) or ``(image, bin)`` for one
-    bin (``("ZGM112P", 0)`` is the top geosignal). Labels without a usable source are kept as NaN-free zeros and must
+    ``ZRH16PT``; a 32-bin image such as ``ZRH16P`` is reduced by ``azimuthal_average``), ``(image, bin)`` for one
+    bin, or ``(image, side)`` for a 90-degree quadrant sector (``("ZRH16P", "T")``; see ``backend.data.quadrants``). Labels without a usable source are kept as NaN-free zeros and must
     get weight 0. Stations are dropped only where a ``required`` label (default: all sourced labels) or the
     trajectory is missing.
     """

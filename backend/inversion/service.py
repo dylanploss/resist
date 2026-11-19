@@ -3,10 +3,11 @@
 The QC page picks curves; this module maps them onto the 1.5D forward model (``backend.inversion.adr_forward``):
 
 * ``AR`` averaged resistivities are used as is; a ``C`` variant (``ARH16PC``) uses the vendor-corrected curve.
-* A ``ZR`` image at 16/32/48 in contributes its **top and bottom** bins (delivered ``ZR..T``/``ZR..B`` curves, or image
-  bins 0 and 16 when a run lacks them); ``ZR..T``/``ZR..B`` curves can also be selected directly. These carry the
+* A ``ZR`` image at 16/32/48 in contributes its **top and bottom** quadrants, extracted from the image as 90-degree
+  sectors (``backend.data.quadrants``) for every run, so data and forward model use the same definition. Selecting
+  ``ZR..T``/``ZR..B`` directly uses the image sector when the image exists, else the delivered curve. These carry the
   up/down information that places boundaries above or below the well.
-* A ``ZG`` geosignal image contributes its **top** bin (bin 0; phase in deg, attenuation in dB).
+* A ``ZG`` geosignal image contributes its **top** quadrant sector (phase in deg, attenuation in dB).
 * Phase weight 1. With ``calibration`` on, attenuation is down-weighted and 2 MHz attenuation (averaged and
   top/bottom) gets the Z-20 resistivity-dependent correction (docs/inversion/HACKATHON_PLAN.md).
 * Single bins and geosignals are weighted by their own noise, estimated from the data in the interval.
@@ -33,7 +34,6 @@ AR_CURVE = re.compile(r"^AR([HML])(\d+)([PA])(C?)$")
 ZR_CURVE = re.compile(r"^ZR([HML])(\d+)([PA])([TBLR]?)$")
 ZG_CURVE = re.compile(r"^ZG([HML])(\d+)([PA])$")
 FREQ_HZ = {letter: f for f, letter in FREQ_LETTER.items()}
-TOP_BIN, BOTTOM_BIN = 0, 16           # bin 1 = up, bin 17 = down (dossier); matches the delivered ZR T/B curves
 CALIBRATED_ATTENUATION_WEIGHT = {2e6: 0.5, 5e5: 0.25, 1.25e5: 0.25}
 GEOSIGNAL_WEIGHT = {"ZGL112AT": 0.25}  # 125 kHz attenuation geosignal barely tracks ZR top/bottom (r < 0.16)
 SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
@@ -68,15 +68,12 @@ def _targets(run, name):
     if ar:
         return [(f"AR{ar[1]}{ar[2]}{ar[3]}", name, "avg")]
     if zr and zr[4] in ("T", "B"):
-        return [(name, name, "top" if zr[4] == "T" else "bottom")]
+        image = name[:-1]
+        return [(name, (image, zr[4]) if image in run.curves else name, "top" if zr[4] == "T" else "bottom")]
     if zr and not zr[4]:
-        out = []
-        for side, b, kind in (("T", TOP_BIN, "top"), ("B", BOTTOM_BIN, "bottom")):
-            label = f"{name}{side}"
-            out.append((label, label if label in run.curves else (name, b), kind))
-        return out
+        return [(f"{name}{side}", (name, side), kind) for side, kind in (("T", "top"), ("B", "bottom"))]
     if zg:
-        return [(f"{name}T", (name, TOP_BIN), "geosignal")]
+        return [(f"{name}T", (name, "T"), "geosignal")]
     return []
 
 
@@ -108,7 +105,7 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
                 weight = 1.0
             entry = {"curve": name, "label": label, "kind": kind, "measurement": measurement,
                      "frequency_hz": freq, "spacing_in": int(re.match(r"\D+(\d+)", label[2:])[1]),
-                     "source": source if isinstance(source, str) else f"{source[0]} bin {source[1]}",
+                     "source": source if isinstance(source, str) else f"{source[0]} {source[1]} sector",
                      "vendor_corrected": kind == "avg" and name.endswith("C"), "weight": weight, "correction": None}
             if calibration and label in ATTENUATION_CORRECTION:
                 a, g = ATTENUATION_CORRECTION[label]
