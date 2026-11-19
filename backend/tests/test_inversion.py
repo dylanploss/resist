@@ -131,6 +131,15 @@ class DirectionalForwardTests(unittest.TestCase):
         for lab in ("ZGM112PT", "ZGM112AT", "ZGL112PT"):
             self.assertAlmostEqual(v[lab], 0.0, places=6)
 
+    def test_inclined_homogeneous_zero_geosignal_with_unnormalised_vectors(self):
+        fwd = ADRForward(azimuthal=True, quadrant="bin", long_spacings=())
+        traj = Trajectory(np.zeros(1), np.zeros((1, 3)), np.array([[0.999, 0, 0.0436]]),
+                          np.array([[0.0436, 0, -0.999]]))
+        row = fwd.predict(LayerModel(np.array([]), np.array([10.0]), np.array([10.0])), traj)[0]
+        for lab, val in zip(fwd.channel_labels(), row):
+            if lab.startswith("ZG"):
+                self.assertAlmostEqual(val, 0.0, places=3, msg=lab)
+
     def test_bottom_bin_sees_resistive_bed_below_and_mirror_flips_sign(self):
         (below,) = self.values(LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0])), [0.8])
         (above,) = self.values(LayerModel(np.array([-1.0]), np.array([50.0, 8.0]), np.array([50.0, 8.0])), [-0.8])

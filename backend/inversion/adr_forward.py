@@ -364,7 +364,7 @@ class ADRForward:
         ls_p, ls_a = np.empty((n_st, BINS, nl)), np.empty((n_st, BINS, nl))
         gs = np.empty((n_st, BINS, len(self.geosignals), 2))
         for i in range(n_st):
-            t, h = traj.axis[i], traj.high[i]
+            t, h = traj.axis[i] / np.linalg.norm(traj.axis[i]), traj.high[i] / np.linalg.norm(traj.high[i])
             x = t - (t @ n) * n
             if np.linalg.norm(x) < 1e-9:
                 x = h - (h @ n) * n
