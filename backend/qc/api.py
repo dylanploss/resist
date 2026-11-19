@@ -12,7 +12,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from backend.qc.selection import DEFAULT_SELECT, SELECT_RANGE, select_curves
-from backend.services import runs
+from backend.services import runs, well3d
 
 REPO_ROOT = runs.REPO_ROOT
 DATA_DIR = runs.data_dir()
@@ -64,14 +64,7 @@ def curve(run: str, name: str, start_ft: float | None = None, end_ft: float | No
     if name not in data.curves:
         raise HTTPException(404, f"unknown curve {name} in {run}")
     md_ft = data.depth_m * FT_PER_M
-    keep = np.ones(len(md_ft), dtype=bool)
-    if start_ft is not None:
-        keep &= md_ft >= start_ft
-    if end_ft is not None:
-        keep &= md_ft <= end_ft
-    idx = np.flatnonzero(keep)
-    stride = max(1, math.ceil(len(idx) / max_points))
-    idx = idx[::stride]
+    idx, stride = well3d.window_indices(md_ft, start_ft, end_ft, max_points)
     values = data.curves[name][idx]
     meta = data.metadata.set_index("curve").loc[name]
     return {
@@ -85,6 +78,18 @@ def curve(run: str, name: str, start_ft: float | None = None, end_ft: float | No
         # Images are returned bins x depth, the layout a heatmap expects.
         "values": _to_list(values.T if values.ndim == 2 else values),
     }
+
+
+@router.get("/runs/{run}/well3d")
+def well_3d(run: str, curve: str, start_ft: float | None = None, end_ft: float | None = None,
+            max_points: int = Query(4000, ge=100, le=20000)) -> dict:
+    """One curve along the well path, with the QC tab colour spec; see well3d.well3d."""
+    try:
+        return well3d.well3d(_load(run), curve, start_ft, end_ft, max_points)
+    except well3d.UnknownCurveError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except well3d.NoTrajectoryError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/runs/{run}/selection")
