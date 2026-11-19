@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check:udar": "node scripts/check-udar-sync.mjs",
+    "check:colormap": "node scripts/check-colormap.mjs",
     "sync:udar": "node scripts/check-udar-sync.mjs --write"
   },
   "dependencies": {
