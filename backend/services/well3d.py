@@ -9,6 +9,9 @@ from backend.qc import metrics
 from backend.qc.selection import doi_tier
 
 FT_TO_M = 0.3048
+IN_TO_M = 0.0254
+# Assumed: a propagation tool resolves at most about three transmitter-receiver spacings radially.
+DOI_CAP_SPACINGS = 3.0
 TRAJECTORY = ("TVD", "INC", "AZI", "UTMX", "UTMY")
 
 
@@ -116,6 +119,67 @@ def curve_doi(row: dict) -> tuple[float | None, str | None]:
     return doi, doi_tier(doi)
 
 
+def skin_depth_m(rho_ohmm, frequency_hz: float) -> np.ndarray:
+    """Plane-wave skin depth sqrt(2 rho / (omega mu0)) = 503.3 sqrt(rho / f) metres."""
+    return 503.3 * np.sqrt(np.asarray(rho_ohmm, dtype=float) / frequency_hz)
+
+
+def doi_metres(rho_ohmm, frequency_hz: float, spacing_in: float, measurement: str) -> np.ndarray:
+    """Estimated radial reach per sample: skin depth in the local resistivity, softly capped by spacing.
+
+    Approximation, not an inversion: the skin depth sets how far the signal penetrates in the
+    formation the tool sits in, and a propagation tool cannot resolve much beyond a few
+    transmitter-receiver spacings. 1/doi^2 = 1/skin^2 + 1/cap^2 keeps the reach growing with
+    resistivity instead of flattening at a hard cap. Attenuation reads deeper by the same factor
+    the QC DOI index uses.
+    """
+    factor = metrics.ATTENUATION_DEPTH_FACTOR if measurement == "attenuation" else 1.0
+    cap = DOI_CAP_SPACINGS * spacing_in * IN_TO_M
+    skin = skin_depth_m(rho_ohmm, frequency_hz)
+    return factor / np.sqrt(1 / skin ** 2 + 1 / cap ** 2)
+
+
+def _reference_resistivity(data: WellRun, row: dict) -> str | None:
+    """The curve whose resistivity sets the DOI: the curve itself if it is a resistivity, else the
+    run's deepest-reading AR resistivity with at least half its samples valid."""
+    if row.get("family") in ("AR", "ZR") and row.get("unit") == "ohmm":
+        return row["curve"]
+    meta = data.metadata
+    ar = meta[(meta["family"] == "AR") & (meta["unit"] == "ohmm") & (meta["valid_fraction"] >= 0.5)]
+    if ar.empty:
+        return None
+    depth = ar.apply(lambda r: metrics.doi_index(r["spacing_in"], r["frequency_hz"], r["measurement"]), axis=1)
+    return str(ar.loc[depth.idxmax(), "curve"])
+
+
+def doi_profile(data: WellRun, row: dict, idx: np.ndarray, md_ft: np.ndarray) -> dict | None:
+    """Per-sample DOI in metres for the returned samples, or None for non-ADR curves."""
+    if row.get("family") not in ("AR", "ZR", "ZG"):
+        return None
+    source = _reference_resistivity(data, row)
+    if source is None:
+        return None
+    raw = np.asarray(data.curves[source], dtype=float)
+    positive = np.where(raw > 0, raw, np.nan)
+    if raw.ndim == 2:
+        counts = np.isfinite(positive).sum(axis=1)
+        rho = np.where(counts > 0, np.nansum(positive, axis=1) / np.maximum(counts, 1), np.nan)
+    else:
+        rho = positive
+    rho, _ = metrics.mask_saturation(rho)
+    low, high = _percentile(rho, 0.02), _percentile(rho, 0.98)
+    if low is None:
+        return None
+    rho = np.clip(rho, low, high)
+    picked = rho[idx]
+    ok = np.isfinite(picked)
+    if not ok.any():
+        return None
+    picked = np.interp(md_ft[idx], md_ft[idx][ok], picked[ok])
+    doi = doi_metres(picked, row["frequency_hz"], row["spacing_in"], row["measurement"])
+    return {"doi_m": doi, "source": source, "rho": picked}
+
+
 def _nullable(values: np.ndarray) -> list:
     out = values.astype(object)
     out[~np.isfinite(values)] = None
@@ -151,6 +215,7 @@ def well3d(data: WellRun, curve: str, start_ft: float | None = None, end_ft: flo
     tvd = path["TVD"]
     tvd_ft = tvd[idx] if tvd is not None else -path["z"][idx] / FT_TO_M
     tvd0 = absolute("TVD")
+    profile = doi_profile(data, {**row, "curve": curve}, idx, path["md_ft"])
     return {
         "run": data.path.stem,
         "well": data.well,
@@ -165,6 +230,8 @@ def well3d(data: WellRun, curve: str, start_ft: float | None = None, end_ft: flo
         "color": color_spec(raw, unit),
         "doi_index": doi,
         "doi_tier": tier,
+        "doi_m": None if profile is None else np.round(profile["doi_m"], 3).tolist(),
+        "doi_source": None if profile is None else profile["source"],
         "md_ft": path["md_ft"][idx].tolist(),
         "tvd_ft": _nullable(tvd_ft),
         "inc_deg": _nullable(path["INC"][idx]) if path["INC"] is not None else [None] * len(idx),

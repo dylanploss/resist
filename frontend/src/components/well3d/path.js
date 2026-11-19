@@ -82,6 +82,7 @@ export const nearestIndex = (path, md) => {
 
 // Tube with one ring per sample. u runs clockwise from the high side looking down-hole (0..1),
 // v is the sample index, so a texture row per sample colours the tube exactly at each sample.
+// `radius` is a number or one radius per sample.
 export function buildTube(path, radius, radial = 32) {
   const { n, pos, high, right } = path
   const ring = radial + 1
@@ -89,10 +90,11 @@ export function buildTube(path, radius, radial = 32) {
   const uv = new Float32Array(2 * n * ring)
   for (let i = 0; i < n; i++) {
     const v = n > 1 ? (i + 0.5) / n : 0.5
+    const ri = typeof radius === 'number' ? radius : radius[i]
     for (let k = 0; k < ring; k++) {
       const phi = (2 * Math.PI * k) / radial
-      const c = Math.cos(phi) * radius
-      const s = Math.sin(phi) * radius
+      const c = Math.cos(phi) * ri
+      const s = Math.sin(phi) * ri
       const o = 3 * (i * ring + k)
       for (let d = 0; d < 3; d++) vertices[o + d] = pos[3 * i + d] + c * high[3 * i + d] + s * right[3 * i + d]
       uv[2 * (i * ring + k)] = k / radial

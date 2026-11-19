@@ -102,6 +102,11 @@ travel-down-the-well camera and a coloured tube, and that can later wrap the 32-
       present it as a measured reach. Where the constant comes from must be recorded in the
       implementation notes.
     - Curves without a DOI (non-ADR channels) fall back to a fixed radius, and the UI says so.
+12. **Irregular DOI tube (change request, 2026-11-19 13:06).** The tube radius varies sample by
+    sample with the actual depth of investigation, which depends on the local formation
+    resistivity, so the tube swells in resistive zones and narrows in conductive ones. It replaces
+    the constant radius per curve from criterion 11. The panel shows the DOI at the travel point,
+    labelled as an estimate.
 
 ## Approach
 
@@ -234,7 +239,13 @@ endpoint. Nothing else depends on them.
 - **Labels:** depth ticks and the north arrow label are screen-sized sprites, not drei `Html`, which logged React root unmount errors.
 - **QC action:** a **3D** link next to each curve name in the QC table, and a click on a chip in the selection summary.
 - **Known console warning:** `THREE.Clock: This module has been deprecated` comes from R3F 9.8 with three 0.187; it is a warning, not an error.
-- **DOI-scaled tube (step 10):** done. The backend returns the QC `doi_index`/`doi_tier` (reusing `metrics.doi_index` and `selection.doi_tier`); the frontend sets tube radius = `doi_index × METRES_PER_DOI` (`Well3dPage.jsx`). Ticks, marker ring, follow distance and min zoom distance stay proportional (`WellScene.jsx`, unchanged).
+- **Irregular DOI tube (criterion 12):** done; this replaces the constant `METRES_PER_DOI` radius from step 10.
+  - The backend returns `doi_m`, with one value per sample (`well3d.doi_metres`): skin depth `δ = 503.3·√(ρ/f)` in the local resistivity, softly capped at `DOI_CAP_SPACINGS = 3` transmitter–receiver spacings (`1/doi² = 1/δ² + 1/cap²`), and × 1.5 for attenuation, the same factor the QC index uses.
+  - `ρ` is the curve itself for AR/ZR (the mean of the bins for images). For ZG it is the run's deepest AR resistivity (`doi_source`). Saturated samples are masked, the rest are clipped to the 2nd–98th percentile, and gaps are interpolated.
+  - **Assumptions:** skin depth as the reach and the 3-spacing cap are physics-based approximations, not vendor DOI figures or an inversion result. The soft cap was chosen over `min(δ, cap)` because the hard cap flattened deep curves in resistive chalk.
+  - Example ranges: Z-19 ARL48A 2.5–4.1 m, ARH16P 0.45–0.82 m. On VC-2 the 125 kHz curves sit near their 5.5 m limit through most of the run, because the chalk there is very resistive.
+  - The tube has one ring per sample at that sample's radius (`buildTube` takes a number or one radius per sample). The ticks, marker ring and camera use the largest radius. The panel shows `DOI here ≈ … m (estimate, from <curve>)`, the run's min–max and the QC index. **Tube scale** multiplies every radius.
+- **DOI-scaled tube (step 10, superseded by criterion 12):** done. The backend returns the QC `doi_index`/`doi_tier` (reusing `metrics.doi_index` and `selection.doi_tier`); the frontend sets tube radius = `doi_index × METRES_PER_DOI` (`Well3dPage.jsx`). Ticks, marker ring, follow distance and min zoom distance stay proportional (`WellScene.jsx`, unchanged).
   - **`METRES_PER_DOI = 0.5` is an assumption, not a calibration.** `doi_index` is a relative ordering heuristic (*"not a reach in inches"*), and the dossier gives no absolute reach. 0.5 m per unit was chosen so the 1.0 reference (16 in 2 MHz phase) draws a 0.5 m radius and the deepest index in the data (112 in 125 kHz attenuation, 42) draws 21 m, keeping the range at the tens-of-metres scale of deep directional resistivity while preserving the QC ordering linearly. Replace it with tool-specific DOI figures if the vendor provides them.
   - The panel labels the radius as an estimate (`DOI index … (tier) · tube radius ≈ … m (estimate)`). Non-ADR curves (`doi_index` null) draw a fixed 3 m radius (`FALLBACK_RADIUS_M`, the old default) and the panel says *No DOI (non-ADR curve)*.
   - The fixed **Tube radius** picker is replaced by a **Tube scale** multiplier (1, 2, 5, 10×, default 1×) so a thin shallow tube can be enlarged for visibility on long wells without losing the DOI proportions between curves; the panel shows the scale when it is above 1×.

@@ -102,6 +102,31 @@ class Well3dApiTests(unittest.TestCase):
         conventional = self.get(curve="GR", max_points=100).json()
         self.assertIsNone(conventional["doi_index"])
         self.assertIsNone(conventional["doi_tier"])
+        self.assertIsNone(conventional["doi_m"])
+
+    def test_doi_metres_grows_with_resistivity_and_is_bounded_by_spacing(self):
+        rho = np.array([1.0, 10.0, 100.0, 1e4])
+        doi = well3d.doi_metres(rho, 2_000_000, 16, "phase")
+        self.assertTrue(np.all(np.diff(doi) > 0))
+        self.assertLess(doi[-1], well3d.DOI_CAP_SPACINGS * 16 * well3d.IN_TO_M)
+        self.assertAlmostEqual(well3d.skin_depth_m(10.0, 2_000_000), 1.1254, places=3)
+
+    def test_doi_m_varies_per_sample_along_the_well(self):
+        body = self.get(curve="ARH16P", max_points=500).json()
+        doi = np.array(body["doi_m"])
+        self.assertEqual(len(doi), len(body["md_ft"]))
+        self.assertEqual(body["doi_source"], "ARH16P")
+        self.assertTrue(np.all(np.isfinite(doi)) and np.all(doi > 0))
+        self.assertGreater(doi.max() / doi.min(), 1.2)
+        deep = np.array(self.get(curve="ARL48AC", max_points=500).json()["doi_m"])
+        self.assertGreater(np.median(deep), np.median(doi))
+
+    def test_geosignal_doi_uses_deepest_resistivity(self):
+        client = TestClient(app)
+        zg = next(c for c in runs.get_run(GEOSIGNAL_RUN).curves if c.startswith("ZG"))
+        body = client.get(f"/runs/{GEOSIGNAL_RUN}/well3d", params={"curve": zg, "max_points": 200}).json()
+        self.assertTrue(body["doi_source"].startswith("AR"))
+        self.assertEqual(len(body["doi_m"]), len(body["md_ft"]))
 
     def test_image_curve_rows_of_32(self):
         body = self.get(curve="ZRM48A", max_points=200).json()

@@ -18,10 +18,7 @@ const STEPS_FT = [10, 25, 50, 100, 250, 500]
 const SPEEDS_FT_S = [25, 50, 100, 200, 500, 1000]
 const EXAGGERATIONS = [1, 2, 5, 10, 20]
 const TUBE_SCALES = [1, 2, 5, 10]
-// Estimate, not a measured reach: QC doi_index is relative (1.0 = 16 in 2 MHz phase). Assumed 0.5 m per
-// unit (uncalibrated): the reference curve draws 0.5 m and the deepest index (112 in 125 kHz
-// attenuation, 42) 21 m. Rationale: docs/plans/well-3d-view.md implementation notes.
-const METRES_PER_DOI = 0.5
+// Curves without a per-sample DOI (non-ADR channels) draw a fixed tube.
 const FALLBACK_RADIUS_M = 3
 const ZOOM_FACTOR = 0.3
 
@@ -97,8 +94,9 @@ export default function Well3dPage({ runs, active }) {
 
   const [exaggeration, setExaggeration] = useState(1)
   const [tubeScale, setTubeScale] = useState(1)
-  const baseRadius = data?.doi_index != null ? data.doi_index * METRES_PER_DOI : FALLBACK_RADIUS_M
-  const radius = baseRadius * tubeScale
+  // Per-sample DOI in metres from the backend (skin depth in the local resistivity); see well3d.doi_metres.
+  const radii = useMemo(() => (data?.doi_m ? data.doi_m.map((r) => r * tubeScale) : null), [data, tubeScale])
+  const radius = radii ? Math.max(...radii) : FALLBACK_RADIUS_M * tubeScale
   const [step, setStep] = useState(50)
   const [speed, setSpeed] = useState(100)
   const [mode, setMode] = useState('free')
@@ -155,7 +153,7 @@ export default function Well3dPage({ runs, active }) {
     const tvd0 = data.tvd_ft[lo]
     const tvd1 = data.tvd_ft[Math.min(lo + 1, path.n - 1)]
     const tvd = tvd0 != null && tvd1 != null ? tvd0 + (tvd1 - tvd0) * f : null
-    return { tvd, inc: data.inc_deg[i], azi: data.azi_deg[i], ...sampleValue(data, i) }
+    return { i, tvd, inc: data.inc_deg[i], azi: data.azi_deg[i], ...sampleValue(data, i) }
   }, [path, data, md])
 
   const status = STATUS[statusOf(shown)]
@@ -217,7 +215,7 @@ export default function Well3dPage({ runs, active }) {
           </Box>
           <Box sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             <Suspense fallback={<LinearProgress />}>
-              <WellScene ref={scene} data={data} path={path} radius={radius} active={active} travel={travelProps} />
+              <WellScene ref={scene} data={data} path={path} radius={radius} radii={radii} active={active} travel={travelProps} />
             </Suspense>
             <Box sx={{ position: 'absolute', top: 8, left: 8, bgcolor: 'rgba(255,255,255,0.85)', p: 1, borderRadius: 1,
               borderLeft: 4, borderColor: status?.color ?? 'grey.500', pointerEvents: 'none' }}>
@@ -228,8 +226,10 @@ export default function Well3dPage({ runs, active }) {
                 INC {fmtNum(readout.inc)}° · AZI {fmtNum(readout.azi)}°
               </Typography>
               <Typography variant="body2" data-testid="well3d-doi">
-                {data.doi_index != null
-                  ? `DOI index ${fmtNum(data.doi_index)} (${data.doi_tier}) · tube radius ≈ ${fmtNum(radius)} m (estimate)`
+                {data.doi_m
+                  ? `DOI here ≈ ${fmtNum(data.doi_m[readout.i], 2)} m (estimate, from ${data.doi_source}) · ` +
+                    `run ${fmtNum(Math.min(...data.doi_m), 2)}–${fmtNum(Math.max(...data.doi_m), 2)} m · ` +
+                    `QC index ${fmtNum(data.doi_index)} (${data.doi_tier})`
                   : `No DOI (non-ADR curve) · fixed tube radius ${fmtNum(radius)} m`}
                 {tubeScale > 1 && ` · ${tubeScale}× scale`}
               </Typography>
