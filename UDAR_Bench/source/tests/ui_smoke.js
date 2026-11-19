@@ -1,0 +1,32 @@
+// App file: APP if set, else source/build/udar.html (after `node build/build.js`), else the packaged UDAR_Bench.html. Browser: CHROME if set, else Playwright's own Chromium. Screenshots go to tests/shots.
+const __p = require('path'), __fs = require('fs'), APP_URL = require('url').pathToFileURL(process.env.APP || [__p.join(__dirname, '..', 'build', 'udar.html'), __p.join(__dirname, '..', '..', 'UDAR_Bench.html')].find(f => __fs.existsSync(f))).href;
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true, args: ['--no-sandbox'] });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = [];
+  page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.type() + ': ' + m.text()); });
+  page.on('pageerror', e => errs.push('PAGEERROR: ' + e.message + '\n' + (e.stack || '').split('\n').slice(0, 4).join('\n')));
+  await page.goto(APP_URL);
+  await page.waitForTimeout(500);
+  await page.click('#tab-geo'); await page.waitForTimeout(600);
+  await page.screenshot({ path: __p.join(__dirname, 'shots', '02_geo.png') });
+  console.log('after geo:', errs.splice(0));
+  await page.click('#tab-fwd'); 
+  await page.waitForFunction(() => document.body.innerText.includes('Up to date'), null, { timeout: 30000 }).catch(e => console.log('fwd did not finish: ' + e.message));
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: __p.join(__dirname, 'shots', '03_fwd.png'), fullPage: false });
+  console.log('after fwd:', errs.splice(0));
+  await page.click('#tab-inv'); await page.waitForTimeout(500);
+  await page.screenshot({ path: __p.join(__dirname, 'shots', '04_inv_before.png') });
+  const t0 = Date.now();
+  await page.click('text=Run inversion');
+  await page.waitForFunction(() => { const p = document.querySelectorAll('.pill'); return Array.from(p).some(x => x.textContent === 'Up to date') && !document.body.innerText.includes('Running'); }, null, { timeout: 120000 }).catch(e => console.log('inv did not finish: ' + e.message));
+  console.log('inversion wall time ms', Date.now() - t0);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: __p.join(__dirname, 'shots', '05_inv.png') });
+  await page.evaluate(() => document.querySelector('.main:not([hidden])').scrollTo(0, 700)); await page.waitForTimeout(300);
+  await page.screenshot({ path: __p.join(__dirname, 'shots', '06_inv_scroll.png') });
+  console.log('after inv:', errs.splice(0));
+  await browser.close();
+})();
