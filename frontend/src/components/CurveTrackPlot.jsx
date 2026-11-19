@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Box, LinearProgress, Typography } from '@mui/material'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Box, Button, LinearProgress, Typography } from '@mui/material'
 import PlotlyChart from './PlotlyChart.jsx'
 import { STATUS, api, runPath } from '../api.js'
 
@@ -7,6 +7,8 @@ const MAX_POINTS = 1500
 const IMAGE_HEIGHT = 150
 const LINE_HEIGHT = 110
 const GAP = 30
+const MARGIN_TOP = 10
+const FOCUS_COLOR = '#ffb300'
 
 function percentile(values, p) {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b)
@@ -34,27 +36,34 @@ function imageTrace(track, axis, domain, colorbarLen) {
   }
 }
 
-function buildFigure(names, tracks, statusOf, revision) {
+function buildFigure(names, tracks, statusOf, revision, focus) {
   const present = names.filter((n) => tracks[n])
   const heights = present.map((n) => (tracks[n].image ? IMAGE_HEIGHT : LINE_HEIGHT))
   const total = heights.reduce((a, b) => a + b, 0) + GAP * Math.max(0, present.length - 1)
   const ref = (i) => (i === 0 ? 'y' : `y${i + 1}`)
   const layout = {
-    height: total + 70, margin: { l: 95, r: 90, t: 10, b: 50 }, showlegend: false,
+    height: total + MARGIN_TOP + 50, margin: { l: 95, r: 90, t: MARGIN_TOP, b: 50 }, showlegend: false,
     xaxis: { title: { text: 'MD (ft)' }, anchor: ref(present.length - 1) },
-    uirevision: revision,
+    shapes: [], uirevision: revision,
   }
   const data = []
+  const tops = {}
   let offset = 0
   present.forEach((name, i) => {
     const track = tracks[name]
     const domain = [1 - (offset + heights[i]) / total, 1 - offset / total]
+    tops[name] = MARGIN_TOP + offset
     offset += heights[i] + GAP
     const color = STATUS[statusOf(name)]?.color ?? '#424242'
     const logAxis = !track.image && track.unit === 'ohmm'
+    const label = name === focus ? `<b>${name}</b>` : name
     layout[i === 0 ? 'yaxis' : `yaxis${i + 1}`] = {
-      domain, title: { text: `${name}<br>${track.unit}`, font: { size: 11, color } },
+      domain, title: { text: `${label}<br>${track.unit}`, font: { size: 11, color } },
       type: logAxis ? 'log' : 'linear', autorange: track.image ? 'reversed' : true,
+    }
+    if (name === focus) {
+      layout.shapes.push({ type: 'rect', xref: 'paper', yref: 'paper', x0: 0, x1: 1, y0: domain[0], y1: domain[1],
+        line: { color: FOCUS_COLOR, width: 3 }, fillcolor: 'rgba(0,0,0,0)', layer: 'above' })
     }
     if (track.image) {
       data.push(imageTrace(track, ref(i), domain, heights[i] / total))
@@ -67,12 +76,13 @@ function buildFigure(names, tracks, statusOf, revision) {
       })
     }
   })
-  return { data, layout, present }
+  return { data, layout, present, tops }
 }
 
-function CurveTrackPlot({ run, names, statusOf }) {
+function CurveTrackPlot({ run, names, statusOf, focus }) {
   const [range, setRange] = useState(null)
   const [cache, setCache] = useState({ rangeKey: 'full', tracks: {}, error: null })
+  const plotBox = useRef(null)
   const rangeKey = range?.join(',') ?? 'full'
   const tracks = useMemo(() => (cache.rangeKey === rangeKey ? cache.tracks : {}), [cache, rangeKey])
   const missing = names.filter((n) => !tracks[n])
@@ -97,29 +107,46 @@ function CurveTrackPlot({ run, names, statusOf }) {
     return () => { cancelled = true }
   }, [missingKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, layout, present } = useMemo(
-    () => buildFigure(names, tracks, statusOf, run), [names, tracks, statusOf, run])
+  const { data, layout, present, tops } = useMemo(
+    () => buildFigure(names, tracks, statusOf, run, focus?.name), [names, tracks, statusOf, run, focus?.name])
+  const focusTop = focus ? tops[focus.name] : undefined
 
-  const onRelayout = (event) => {
-    if (event['xaxis.autorange']) setRange(null)
-    else if (event['xaxis.range[0]'] != null) setRange([event['xaxis.range[0]'], event['xaxis.range[1]']])
-  }
+  useEffect(() => {
+    if (focusTop == null || !plotBox.current) return
+    const top = plotBox.current.getBoundingClientRect().top + window.scrollY + focusTop - 120
+    window.scrollTo({ top, behavior: 'smooth' })
+  }, [focus?.nonce, focusTop != null]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const events = useMemo(() => ({
+    plotly_relayout: (event) => {
+      if (event['xaxis.autorange']) setRange(null)
+      else if (event['xaxis.range[0]'] != null) setRange([event['xaxis.range[0]'], event['xaxis.range[1]']])
+    },
+  }), [])
 
   if (!names.length) {
-    return <Typography color="text.secondary">Tick “Plot” in the table or click a point to show curves.</Typography>
+    return <Typography color="text.secondary">Click a point in the chart or a curve name to view its log.</Typography>
   }
   const stride = Math.max(1, ...present.map((n) => tracks[n].stride))
   return (
     <Box>
       {missing.length > 0 && !cache.error && <LinearProgress sx={{ mb: 1 }} />}
       {cache.error && <Typography color="error">{cache.error}</Typography>}
-      <Typography variant="caption" color="text.secondary">
-        {stride > 1
-          ? `Showing every ${stride}th sample (0.5 ft data). Zoom in on depth to reload at full resolution.`
-          : 'Full resolution (every 0.5 ft sample).'}
-        {' '}Double-click to reset zoom.
-      </Typography>
-      <PlotlyChart data={data} layout={layout} onRelayout={onRelayout} />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+          {stride > 1
+            ? `Showing every ${stride}th sample (0.5 ft data). Zoom in on depth to reload at full resolution.`
+            : 'Full resolution (every 0.5 ft sample).'}
+          {' '}Double-click to reset zoom.
+        </Typography>
+        <Button size="small" onClick={() => document.getElementById('qc-scatter')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>
+          ↑ Back to QC chart
+        </Button>
+      </Box>
+      <Box ref={plotBox}>
+        <PlotlyChart data={data} layout={layout} events={events} />
+      </Box>
     </Box>
   )
 }

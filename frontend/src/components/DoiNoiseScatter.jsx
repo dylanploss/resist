@@ -28,34 +28,55 @@ const LAYOUT = {
     line: { dash: 'dash', color: STATUS.rejected.color, width: 1 } }],
   annotations: [{ xref: 'paper', x: 1, y: STATIC_LIMIT, text: 'static limit', showarrow: false,
     xanchor: 'right', yanchor: 'bottom', font: { size: 10, color: STATUS.rejected.color } }],
+  dragmode: 'select',
   uirevision: 'scatter',
 }
 
-function DoiNoiseScatter({ rows, checked, onTogglePlotted }) {
+function DoiNoiseScatter({ rows, checked, focus, onShowCurve, onShowCurves }) {
   const data = useMemo(() => {
     const points = rows.filter((r) => r.status !== 'context' && r.doi_index != null && r.noise != null)
-    return GROUPS.map(([group, name, color]) => {
+    const traces = GROUPS.map(([group, name, color]) => {
       const pts = points.filter((r) => groupOf(r, checked) === group)
       return {
         type: 'scatter', mode: 'markers', name,
         x: pts.map((r) => r.doi_index), y: pts.map((r) => r.noise),
         customdata: pts.map((r) => r.name),
         text: pts.map((r) => `<b>${r.name}</b><br>${r.reason}`),
-        hovertemplate: '%{text}<br>DOI %{x:.1f} · noise %{y:.2f}<extra></extra>',
+        hovertemplate: '%{text}<br>DOI %{x:.1f} · noise %{y:.2f}<br><i>click to view log</i><extra></extra>',
         marker: { color, size: 10, opacity: group === 'rejected' ? 0.55 : 0.95,
           symbol: pts.map((r) => SYMBOL[r.family] ?? 'circle'), line: { width: 1, color: 'white' } },
       }
     })
-  }, [rows, checked])
+    const focused = points.find((r) => r.name === focus)
+    if (focused) {
+      traces.push({
+        type: 'scatter', mode: 'markers+text', x: [focused.doi_index], y: [focused.noise],
+        text: [focused.name], textposition: 'top center', textfont: { size: 11, color: '#e65100' },
+        marker: { size: 20, color: 'rgba(0,0,0,0)', line: { width: 2.5, color: '#ffb300' } },
+        hoverinfo: 'skip', showlegend: false,
+      })
+    }
+    return traces
+  }, [rows, checked, focus])
+
+  const events = useMemo(() => ({
+    plotly_click: (event) => {
+      const name = event.points.find((p) => p.customdata)?.customdata
+      if (name) onShowCurve(name)
+    },
+    plotly_selected: (event) => {
+      const names = (event?.points ?? []).map((p) => p.customdata).filter(Boolean)
+      if (names.length) onShowCurves(names)
+    },
+  }), [onShowCurve, onShowCurves])
 
   return (
-    <Box>
+    <Box id="qc-scatter">
       <Typography variant="subtitle2">Deep and clean is bottom right</Typography>
       <Typography variant="caption" color="text.secondary">
-        ● AR ■ ZR ◆ ZG · click a point to plot it
+        ● AR ■ ZR ◆ ZG · click a point to jump to its log · drag a box to plot a group
       </Typography>
-      <PlotlyChart data={data} layout={LAYOUT}
-        onClick={(event) => onTogglePlotted(event.points[0].customdata)} />
+      <PlotlyChart data={data} layout={LAYOUT} events={events} />
     </Box>
   )
 }
