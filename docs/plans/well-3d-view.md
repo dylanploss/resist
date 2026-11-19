@@ -1,7 +1,7 @@
 ---
 title: 3D well view of one QC curve
 slug: well-3d-view
-status: approved (2026-11-19: option A three.js + R3F v9 + drei; travel and zoom controls; image wrap as phase 2)
+status: implemented on branch (2026-11-19: option A three.js + R3F v9 + drei; steps 1-9 done, step 10 ship pending)
 owner: Ove
 created: 2026-11-19
 traceability: false
@@ -200,3 +200,14 @@ endpoint. Nothing else depends on them.
    (travel), and Zoom in/out changes camera distance. Say if you meant only one of them.
 3. **Phase 2 image wrap:** include it now, or after the MVP?
 4. **Approval:** approve this plan to start implementation with subagents on `feature/well-3d-view`.
+
+## Implementation notes (deviations from the plan)
+
+- **Colour helper:** the backend computes the colour spec (scale, reverse, log10, zmin, zmax) and the frontend only maps values with `components/well3d/colormap.js`. `CurveTrackPlot.jsx` is unchanged, so the QC tab output cannot drift; `npm run check:colormap` guards the copied Plotly stops.
+- **Colouring:** scalar and image curves both use a `DataTexture` (one row per sample, nearest filtering), so colours change per sample like the QC heatmap instead of blending between samples.
+- **Nulls:** dark grey `rgb(80,80,80)`, because the RdBu midpoint is already a light grey (190) and a null must not read as a zero geosignal.
+- **Image wrap (step 9):** done. Assumption: bin 1 is centred on the high side (top of hole) and bins run clockwise looking down-hole, 11.25° each. On vertical sections the high side falls back to north. Not yet checked against a known feature in the data.
+- **Camera:** the tab opens in **Free** with the whole well fitted (looking across the well from 30° above). **Reset view** fits the whole well and switches to Free. **Follow** starts at 25 × tube radius behind the travel point.
+- **Labels:** depth ticks and the north arrow label are screen-sized sprites, not drei `Html`, which logged React root unmount errors.
+- **QC action:** a **3D** link next to each curve name in the QC table, and a click on a chip in the selection summary.
+- **Known console warning:** `THREE.Clock: This module has been deprecated` comes from R3F 9.8 with three 0.187; it is a warning, not an error.
