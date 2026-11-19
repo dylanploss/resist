@@ -6,9 +6,11 @@ import {
 import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
 import ColorBar from '../components/well3d/ColorBar.jsx'
+import { CompareColorBar, CompareDoi, ComparePicker } from '../components/well3d/Compare.jsx'
 import InversionLayers from '../components/well3d/InversionLayers.jsx'
 import { LayersControl, LayersReadout } from '../components/well3d/LayersControl.jsx'
 import { useInversionLayers } from '../components/well3d/inversionLayers.js'
+import { useCompare } from '../components/well3d/useCompare.js'
 import { buildPath, locate, nearestIndex } from '../components/well3d/path.js'
 import { STATUS, api, getCurves, runPath } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
@@ -115,6 +117,9 @@ export default function Well3dPage({ runs, active }) {
     return { min, max }
   }, [data])
   const radius = doiRange ? doiRange.max * tubeScale : FALLBACK_RADIUS_M * tubeScale
+  const compare = useCompare({ run, shown, names, selected, scores: qc.data?.scores, primary: data,
+    maxPoints: MAX_POINTS, tubeScale, fallback: FALLBACK_RADIUS_M })
+  const view = compare.layout?.shell ? compare.layout : null
   const [step, setStep] = useState(50)
   const [speed, setSpeed] = useState(100)
   const [mode, setMode] = useState('free')
@@ -186,6 +191,10 @@ export default function Well3dPage({ runs, active }) {
           {shown && status && (
             <Chip size="small" variant="outlined" label={status.label} sx={{ borderColor: status.color, color: status.color }} />
           )}
+          {run && shown && (
+            <ComparePicker value={compare.value} onChange={compare.setValue} shown={shown} suggestion={compare.suggestion}
+              selected={selected} names={names} statusOf={statusOf} />
+          )}
           {data && (
             <Typography variant="caption" color="text.secondary">
               {data.well} · {data.md_ft.length} samples ({data.stride > 1 ? `1 in ${data.stride}` : 'full resolution'}) · path from{' '}
@@ -200,6 +209,9 @@ export default function Well3dPage({ runs, active }) {
       {run && !shown && qc.loading && <LinearProgress />}
       {well.loading && <LinearProgress />}
       {well.error && <Alert severity="error">{well.error.message}</Alert>}
+      {compare.loading && <LinearProgress color="secondary" />}
+      {compare.error && <Alert severity="error">Compare with: {compare.error.message}</Alert>}
+      {compare.mismatch && <Alert severity="warning">The compared curve has different samples, so it is not drawn.</Alert>}
       {data && !path && <Alert severity="warning">This curve has fewer than two samples with a well position.</Alert>}
 
       {webgl && path && (
@@ -234,8 +246,12 @@ export default function Well3dPage({ runs, active }) {
           </Box>
           <Box sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             <Suspense fallback={<LinearProgress />}>
-              <WellScene ref={scene} data={data} path={path} radius={radius} radii={radii} active={active} travel={travelProps}>
-                {inv.layers && <InversionLayers layers={inv.layers} data={data} path={path} exaggeration={exaggeration} radius={radius} md={md} />}
+              <WellScene ref={scene} data={view ? view.inner : data} path={path} radius={view ? view.radius : radius}
+                radii={view ? view.innerRadii : radii} shell={view?.shell} active={active} travel={travelProps}>
+                {inv.layers && (
+                  <InversionLayers layers={inv.layers} data={data} path={path} exaggeration={exaggeration}
+                    radius={view ? view.radius : radius} md={md} />
+                )}
               </WellScene>
             </Suspense>
             <Box sx={{ position: 'absolute', top: 8, left: 8, bgcolor: 'rgba(255,255,255,0.85)', p: 1, borderRadius: 1,
@@ -254,12 +270,14 @@ export default function Well3dPage({ runs, active }) {
                   : `No DOI (non-ADR curve) · fixed tube radius ${fmtNum(radius)} m`}
                 {tubeScale > 1 && ` · ${tubeScale}× scale`}
               </Typography>
+              {view && <CompareDoi layout={view} i={readout.i} />}
               {inv.layers && <LayersReadout layers={inv.layers} data={data} path={path} md={md} />}
               <Typography variant="caption" color="text.secondary">
                 ↑/↓ travel · +/− zoom · space play · drag to orbit (Free)
               </Typography>
             </Box>
-            <Box sx={{ position: 'absolute', top: 8, right: 8, pointerEvents: 'none' }}>
+            <Box sx={{ position: 'absolute', top: 8, right: 8, pointerEvents: 'none', display: 'flex', gap: 1 }}>
+              {view && <CompareColorBar layout={view} data={view.inner === data ? view.outer : view.inner} />}
               <ColorBar spec={data.color} unit={data.unit} />
             </Box>
           </Box>
