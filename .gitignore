@@ -20,4 +20,5 @@ Thumbs.db
 # Local hackathon artifacts
 resist_repo/
 *.html
+!frontend/index.html
 .env
