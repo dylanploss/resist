@@ -7,6 +7,7 @@ import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
 import ColorBar from '../components/well3d/ColorBar.jsx'
 import { CompareColorBar, CompareDoi, ComparePicker } from '../components/well3d/Compare.jsx'
+import FieldView from '../components/well3d/FieldView.jsx'
 import InversionLayers from '../components/well3d/InversionLayers.jsx'
 import { LayersControl, LayersReadout } from '../components/well3d/LayersControl.jsx'
 import { useInversionLayers } from '../components/well3d/inversionLayers.js'
@@ -83,6 +84,7 @@ function CurvePicker({ value, onChange, selected, names, statusOf }) {
 // Run and curve come from the shared selection, so "View in 3D" on the QC tab opens that curve here.
 export default function Well3dPage({ runs, active }) {
   const { run, setRun, curve, setCurve } = useSelection()
+  const [scope, setScope] = useState('well')
   const [webgl] = useState(hasWebGL)
   const curves = useApi(() => getCurves(run), run || null)
   const qc = useApi(() => api(`${runPath(run)}/qc`), run ? `qc|${run}` : null)
@@ -147,7 +149,7 @@ export default function Well3dPage({ runs, active }) {
   }, [])
 
   useEffect(() => {
-    if (!active || !path) return undefined
+    if (!active || !path || scope !== 'well') return undefined
     const onKey = (e) => {
       if (e.target.closest?.('input, textarea, select, [role="slider"], [role="combobox"], [role="listbox"]')) return
       const actions = {
@@ -161,7 +163,7 @@ export default function Well3dPage({ runs, active }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, path, move, togglePlay, zoom])
+  }, [active, path, scope, move, togglePlay, zoom])
 
   const travelProps = useMemo(() => ({
     md, mdEnd, playing: isPlaying, speed, mode,
@@ -181,11 +183,22 @@ export default function Well3dPage({ runs, active }) {
 
   const status = STATUS[statusOf(shown)]
 
+  const viewToggle = (
+    <ToggleButtonGroup size="small" exclusive value={scope} onChange={(_, v) => v && setScope(v)} aria-label="View">
+      <ToggleButton value="well">Single well</ToggleButton>
+      <ToggleButton value="field">Field</ToggleButton>
+    </ToggleButtonGroup>
+  )
+  if (scope === 'field') {
+    return <FieldView active={active} toggle={viewToggle} onPick={(r) => { setRun(r); setScope('well') }} />
+  }
+
   return (
     <Stack spacing={2}>
       <Paper sx={{ p: 2 }}>
         <ApiStatus state={runs} label="Runs" onRetry={runs.reload} />
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+          {viewToggle}
           {runs.data && <RunPicker runs={runs.data.runs} value={run} onChange={setRun} />}
           {run && <CurvePicker value={shown} onChange={setCurve} selected={selected} names={names} statusOf={statusOf} />}
           {shown && status && (
