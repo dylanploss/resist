@@ -6,6 +6,9 @@ import {
 import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
 import ColorBar from '../components/well3d/ColorBar.jsx'
+import DemoCaption from '../components/well3d/DemoCaption.jsx'
+import { useDemo } from '../components/well3d/useDemo.js'
+import { useSnapshot } from '../components/well3d/useSnapshot.js'
 import { buildPath, locate, nearestIndex } from '../components/well3d/path.js'
 import { STATUS, api, getCurves, runPath } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
@@ -154,11 +157,15 @@ export default function Well3dPage({ runs, active }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [active, path, move, togglePlay, zoom])
 
+  const demo = useDemo({ data, path, active, scene, md, playing: isPlaying, mdStart, mdEnd, setTravel, setMode })
+  const viewport = useRef(null)
+  const savePng = useSnapshot({ viewport, active, run, curve: shown, md })
   const travelProps = useMemo(() => ({
     md, mdEnd, playing: isPlaying, speed, mode,
     onMd: setMd,
     onEnd: () => setTravel((t) => ({ ...t, playing: false })),
-  }), [md, mdEnd, isPlaying, speed, mode, setMd])
+    ...demo.overrides,
+  }), [md, mdEnd, isPlaying, speed, mode, setMd, demo.overrides])
 
   const readout = useMemo(() => {
     if (!path) return null
@@ -219,6 +226,14 @@ export default function Well3dPage({ runs, active }) {
               <Tooltip title="Zoom out (−)"><Button onClick={() => zoom(-1)}>Zoom out</Button></Tooltip>
               <Tooltip title="Fit the whole well (free camera)"><Button onClick={reset}>Reset view</Button></Tooltip>
             </ButtonGroup>
+                          <ButtonGroup size="small" variant="outlined" aria-label="Demo and export">
+                            <Tooltip title={demo.running ? 'Stop the demo (Esc)' : 'Scripted fly-through with captions'}>
+                              <Button onClick={demo.running ? demo.stop : demo.start} variant={demo.running ? 'contained' : 'outlined'}>
+                                {demo.running ? '■ Stop demo' : '★ Demo'}
+                              </Button>
+                            </Tooltip>
+                            <Tooltip title="Download the current 3D view as PNG"><Button onClick={savePng}>Save PNG</Button></Tooltip>
+                          </ButtonGroup>
             <PickSelect label="Vertical exag." value={exaggeration} onChange={setExaggeration} options={EXAGGERATIONS} suffix="×" width={120} />
             <PickSelect label="Tube scale" value={tubeScale} onChange={setTubeScale} options={TUBE_SCALES} suffix="×" width={110} />
           </Box>
@@ -227,7 +242,7 @@ export default function Well3dPage({ runs, active }) {
             <Slider size="small" aria-label="Measured depth" value={md} min={mdStart} max={mdEnd} step={0.5}
               onChange={(_, v) => setMd(v)} valueLabelDisplay="auto" valueLabelFormat={(v) => `${v.toFixed(1)} ft`} />
           </Box>
-          <Box sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+          <Box ref={viewport} sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             <Suspense fallback={<LinearProgress />}>
               <WellScene ref={scene} data={data} path={path} radius={radius} radii={radii} active={active} travel={travelProps} />
             </Suspense>
@@ -254,6 +269,7 @@ export default function Well3dPage({ runs, active }) {
             <Box sx={{ position: 'absolute', top: 8, right: 8, pointerEvents: 'none' }}>
               <ColorBar spec={data.color} unit={data.unit} />
             </Box>
+            <DemoCaption caption={demo.caption} step={demo.step} total={demo.total} />
           </Box>
           {data.image && (
             <Typography variant="caption" color="text.secondary">
