@@ -4,9 +4,10 @@ import { getRuns } from './api.js'
 import { useApi } from './hooks/useApi.js'
 import DataPage from './pages/DataPage.jsx'
 import OverviewPage from './pages/OverviewPage.jsx'
-import QcPage from './pages/QcPage.jsx'
 
+// Lazy pages load on first visit: Modelling bundles the UDAR core, QC bundles Plotly.
 const ModellingPage = lazy(() => import('./pages/ModellingPage.jsx'))
+const QcPage = lazy(() => import('./pages/QcPage.jsx'))
 
 const theme = createTheme({ palette: { primary: { main: '#2a78d6' } } })
 
@@ -19,13 +20,13 @@ const PAGES = [
 
 function App() {
   const [page, setPage] = useState('overview')
-  const [udarOpened, setUdarOpened] = useState(false)
+  const [opened, setOpened] = useState({})
   const [run, setRun] = useState('')
   const runs = useApi(getRuns, 'runs')
 
   const openPage = (v) => {
     setPage(v)
-    if (v === 'udar') setUdarOpened(true)
+    setOpened((o) => (o[v] ? o : { ...o, [v]: true }))
   }
 
   return (
@@ -51,10 +52,14 @@ function App() {
           <DataPage runs={runs} run={run} onRunChange={setRun} />
         </Box>
         <Box hidden={page !== 'qc'}>
-          <QcPage runs={runs} run={run} onRunChange={setRun} />
+          {opened.qc && (
+            <Suspense fallback={<LinearProgress />}>
+              <QcPage runs={runs} run={run} onRunChange={setRun} />
+            </Suspense>
+          )}
         </Box>
         <Box hidden={page !== 'udar'}>
-          {udarOpened && (
+          {opened.udar && (
             <Suspense fallback={<LinearProgress />}>
               <ModellingPage />
             </Suspense>

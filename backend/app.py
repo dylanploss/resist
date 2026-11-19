@@ -17,6 +17,8 @@ from backend.data.loader import measurement_metadata
 from backend.qc.selection import DEFAULT_SELECT, SELECT_RANGE, _json_safe, select_curves
 from backend.services import runs
 
+from backend.qc.api import router as qc_router
+
 app = FastAPI(title="Resist backend")
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +26,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+app.include_router(qc_router)
 
 
 def error(status: int, message: str) -> JSONResponse:
@@ -39,7 +42,7 @@ async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
 async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
     first = exc.errors()[0] if exc.errors() else {}
     where = ".".join(str(p) for p in first.get("loc", ()) if p != "body")
-    return error(400, f"{where}: {first.get('msg', 'invalid request')}".strip(": "))
+    return error(422, f"{where}: {first.get('msg', 'invalid request')}".strip(": "))
 
 
 @app.exception_handler(runs.DataDirError)

@@ -88,7 +88,7 @@ Open http://localhost:5173. The pages are:
 |------|-------|-------------------|
 | Overview | Backend health and the list of runs | Yes |
 | Data | Run picker, curve inventory (family, frequency, spacing), curves vs depth for up to 8 curves | Yes |
-| QC selection | `POST /qc/select` result: selected curves with reasons, rejected curves with reasons, scores, warnings | Yes |
+| QC selection | `GET /runs/{run}/qc` result as a ranked table with status and reasons, DOI-vs-noise scatter, curves vs measured depth (Plotly), and an editable selection saved with `POST /runs/{run}/selection` | Yes |
 | Modelling (UDAR) | UDAR_Bench 1D tabs: Tool, Geology & well, Forward, Inversion | No; runs in the browser |
 
 Verified on Windows 11 with Node 22.23 and Chrome. The Modelling page keeps its settings in the browser's local storage; **Reset all settings** restores the defaults.

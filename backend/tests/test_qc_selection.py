@@ -124,6 +124,16 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("coverage", reasons["ARM32P"])
         self.assertNotIn("ARM82P", reasons)
 
+    def test_longest_clean_spacing_fills_deep_slot_despite_correlated_shorter_curve(self):
+        curves = dict(self.curves)
+        curves["ARM66P"] = self.curves["ARM82P"] * 1.01
+        curves["ARM82P"] = self.curves["ARM82P"] * (1 + 0.02 * RNG.standard_normal(N))
+        result = select_curves(well(curves), n_select=6)
+        reasons = {x["curve"]: x["reason"] for x in result["rejected"]}
+        self.assertIn("ARM82P", result["selected"])
+        self.assertIn("82 in", result["selected_reasons"]["ARM82P"])
+        self.assertFalse(reasons.get("ARM66P", "").startswith("redundant"))
+
     def test_n_select_bounds(self):
         for n in (4, 11):
             with self.assertRaises(ValueError):

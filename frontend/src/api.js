@@ -44,3 +44,20 @@ export const postQcSelect = (run, nSelect) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ run, n_select: nSelect }),
   })
+
+// Helpers shared by the QC visualization components.
+export const runPath = (run) => `/runs/${encodeURIComponent(run)}`
+
+export const api = (path, options) => request(path, options)
+
+export const FREQ_LABEL = { 2000000: '2 MHz', 500000: '500 kHz', 125000: '125 kHz' }
+
+export const STATUS = {
+  auto: { label: 'auto-pick', chip: 'success', color: '#2e7d32' },
+  candidate: { label: 'candidate', chip: 'info', color: '#1976d2' },
+  duplicate: { label: 'duplicate', chip: 'default', color: '#78909c' },
+  rejected: { label: 'rejected', chip: 'error', color: '#d32f2f' },
+  context: { label: 'context log', chip: 'default', color: '#424242' },
+}
+
+export const fmt = (value, digits = 2) => (value == null ? '–' : value.toFixed(digits))

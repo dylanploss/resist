@@ -67,7 +67,8 @@ def summary(path: Path) -> dict:
     key = _key(path)
     if key in _summaries:
         return _summaries[key]
-    entry = {"run": path.stem, "file": path.name, "well": None,
+    entry = {"run": path.stem, "label": path.stem.removesuffix("_RES_GEOSIGNAL"),
+             "file": path.name, "well": None,
              "depth_min_m": None, "depth_max_m": None}
     try:
         with dlis.load(str(path)) as files:

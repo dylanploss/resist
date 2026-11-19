@@ -35,6 +35,7 @@ def test_runs_lists_dlis_files(real_data) -> None:
     assert response.status_code == 200
     listed = {r["run"]: r for r in response.json()["runs"]}
     assert RUN in listed
+    assert listed[RUN]["label"] == RUN.removesuffix("_RES_GEOSIGNAL")
     assert listed[RUN]["well"] == "2/4-VC-2 Y3H"
     assert listed[RUN]["depth_min_m"] < listed[RUN]["depth_max_m"]
 
@@ -101,5 +102,5 @@ def test_qc_select_rejects_out_of_range(n_select: int) -> None:
 
 def test_qc_select_requires_run() -> None:
     response = client.post("/qc/select", json={})
-    assert response.status_code == 400
+    assert response.status_code == 422
     assert "error" in response.json()

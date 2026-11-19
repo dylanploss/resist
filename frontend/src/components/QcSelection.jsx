@@ -1,151 +1,113 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  Grid,
-  Paper,
-  Slider,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Typography,
+  Alert, Box, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Typography,
 } from '@mui/material'
-import { postQcSelect } from '../api.js'
-import { useApi } from '../hooks/useApi.js'
-import ApiStatus from './ApiStatus.jsx'
+import { api, runPath } from '../api.js'
+import CurveTrackPlot from './CurveTrackPlot.jsx'
+import DoiNoiseScatter from './DoiNoiseScatter.jsx'
+import QcTable from './QcTable.jsx'
+import SelectionSummary from './SelectionSummary.jsx'
 
-const num = (v, d = 2) => (v === null || v === undefined ? '–' : typeof v === 'number' ? v.toFixed(d) : String(v))
+const MAX_TRACKS = 8
+const INITIAL_TRACKS = 4
 
-function ScoresTable({ scores, selected }) {
-  const rows = Object.entries(scores).sort((a, b) => (b[1].score ?? -1) - (a[1].score ?? -1))
-  return (
-    <TableContainer sx={{ maxHeight: 440 }}>
-      <Table size="small" stickyHeader>
-        <TableHead>
-          <TableRow>
-            <TableCell>Curve</TableCell>
-            <TableCell>Family</TableCell>
-            <TableCell align="right">Score</TableCell>
-            <TableCell align="right">Quality</TableCell>
-            <TableCell align="right">Coverage</TableCell>
-            <TableCell align="right">Noise</TableCell>
-            <TableCell>Range OK</TableCell>
-            <TableCell align="right">DOI index</TableCell>
-            <TableCell>DOI tier</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {rows.map(([curve, s]) => (
-            <TableRow key={curve} selected={selected.includes(curve)}>
-              <TableCell sx={{ fontFamily: 'monospace' }}>{curve}</TableCell>
-              <TableCell>{s.family ?? ''}</TableCell>
-              <TableCell align="right">{num(s.score, 3)}</TableCell>
-              <TableCell align="right">{num(s.quality)}</TableCell>
-              <TableCell align="right">{num(s.coverage)}</TableCell>
-              <TableCell align="right">{num(s.noise)}</TableCell>
-              <TableCell>{s.range_ok === undefined || s.range_ok === null ? '–' : s.range_ok ? 'yes' : 'no'}</TableCell>
-              <TableCell align="right">{num(s.doi_index)}</TableCell>
-              <TableCell>{s.doi_tier ?? ''}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </TableContainer>
-  )
+function buildRows(qc) {
+  const selected = new Set(qc.selected)
+  const rejected = Object.fromEntries(qc.rejected.map((r) => [r.curve, r.reason]))
+  const rows = Object.entries(qc.scores).map(([name, s]) => {
+    const reason = qc.selected_reasons[name] ?? rejected[name] ?? ''
+    let status = 'rejected'
+    if (s.family === 'conventional') status = 'context'
+    else if (selected.has(name)) status = 'auto'
+    else if (reason.startsWith('clean but ranked')) status = 'candidate'
+    else if (reason.startsWith('same measurement') || reason.startsWith('redundant')) status = 'duplicate'
+    return { name, ...s, reason, status }
+  })
+  rows.sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+  let rank = 0
+  return rows.map((r) => ({ ...r, rank: r.status === 'context' ? null : ++rank }))
 }
 
+const toggle = (list, name) => (list.includes(name) ? list.filter((n) => n !== name) : [...list, name])
+
+// The run comes from the shared run picker on the QC page.
 function QcSelection({ run }) {
   const [nSelect, setNSelect] = useState(8)
-  const [request, setRequest] = useState(null)
-  const key = request && request.run === run ? `${request.run}|${request.n}|${request.id}` : null
-  const qc = useApi(() => postQcSelect(request.run, request.n), key)
-  const r = qc.data
+  const [qc, setQc] = useState({ key: null, body: null, error: null })
+  const [checked, setChecked] = useState([])
+  const [plotted, setPlotted] = useState([])
+  const [save, setSave] = useState({ saving: false, saved: null, error: null })
+  const qcKey = `${run}|${nSelect}`
+
+  useEffect(() => {
+    if (!run) return undefined
+    let cancelled = false
+    api(`${runPath(run)}/qc?n_select=${nSelect}`)
+      .then((body) => {
+        if (cancelled) return
+        setQc({ key: qcKey, body, error: null })
+        setChecked(body.selected)
+        setPlotted(body.selected.slice(0, INITIAL_TRACKS))
+        setSave({ saving: false, saved: null, error: null })
+      })
+      .catch((error) => !cancelled && setQc({ key: qcKey, body: null, error: error.message }))
+    return () => { cancelled = true }
+  }, [run, nSelect, qcKey])
+
+  const rows = useMemo(() => (qc.body ? buildRows(qc.body) : []), [qc.body])
+  const statusOf = useCallback(
+    (name) => (checked.includes(name) ? 'auto' : rows.find((r) => r.name === name)?.status),
+    [checked, rows])
+  const togglePlotted = (name) => setPlotted((list) => toggle(list, name).slice(-MAX_TRACKS))
+  const loading = Boolean(run) && qc.key !== qcKey
+
+  const saveSelection = () => {
+    setSave({ saving: true, saved: null, error: null })
+    api(`${runPath(run)}/selection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ curves: checked, n_select: nSelect }),
+    })
+      .then((saved) => setSave({ saving: false, saved, error: null }))
+      .catch((error) => setSave({ saving: false, saved: null, error: error.message }))
+  }
 
   return (
-    <Stack spacing={2}>
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h6">QC selection</Typography>
-        <Stack direction="row" spacing={3} sx={{ alignItems: 'center', mt: 1, flexWrap: 'wrap' }} useFlexGap>
-          <Box sx={{ width: 260 }}>
-            <Typography variant="body2" id="nselect-label">
-              Curves to select: {nSelect}
-            </Typography>
-            <Slider aria-labelledby="nselect-label" value={nSelect} min={5} max={10} step={1} marks valueLabelDisplay="auto" onChange={(e, v) => setNSelect(v)} />
-          </Box>
-          <Button variant="contained" disabled={!run || qc.loading} onClick={() => setRequest({ run, n: nSelect, id: Date.now() })}>
-            Run QC selection
-          </Button>
-          {!run && <Typography color="text.secondary">Pick a run first.</Typography>}
-        </Stack>
-        <ApiStatus state={qc} label="QC selection" />
-      </Paper>
-      {r && (
+    <Paper sx={{ p: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+        <Typography variant="h6" sx={{ mr: 1 }}>QC selection</Typography>
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <InputLabel>Auto-pick</InputLabel>
+          <Select label="Auto-pick" value={nSelect} onChange={(e) => setNSelect(e.target.value)}>
+            {[5, 6, 7, 8, 9, 10].map((n) => <MenuItem key={n} value={n}>{n} curves</MenuItem>)}
+          </Select>
+        </FormControl>
+        {loading && <><CircularProgress size={20} /><Typography variant="caption">Running QC…</Typography></>}
+      </Box>
+
+      {!run && <Typography color="text.secondary">Pick a run first.</Typography>}
+      {qc.error && <Alert severity="error" sx={{ mb: 2 }}>{qc.error}</Alert>}
+      {save.error && <Alert severity="error" sx={{ mb: 2 }}>Save failed: {save.error}</Alert>}
+      {qc.body?.warnings.map((w) => <Alert key={w} severity="warning" sx={{ mb: 1 }}>{w}</Alert>)}
+
+      {qc.body && !loading && (
         <>
-          {r.warnings && r.warnings.length > 0 && (
-            <Alert severity="warning">
-              {r.warnings.map((w) => (
-                <div key={w}>{w}</div>
-              ))}
-            </Alert>
-          )}
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <Paper sx={{ p: 2, height: '100%' }}>
-                <Typography variant="h6">
-                  Selected ({r.selected.length}) · {r.well}
-                </Typography>
-                <Table size="small">
-                  <TableBody>
-                    {r.selected.map((c) => (
-                      <TableRow key={c}>
-                        <TableCell sx={{ fontFamily: 'monospace' }}>
-                          <Chip size="small" color="success" label={c} />
-                        </TableCell>
-                        <TableCell>{r.selected_reasons[c] ?? ''}</TableCell>
-                        <TableCell align="right">{num(r.scores[c] && r.scores[c].score, 3)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Paper>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <Paper sx={{ p: 2, height: '100%' }}>
-                <Typography variant="h6">Rejected ({r.rejected.length})</Typography>
-                <TableContainer sx={{ maxHeight: 360 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Curve</TableCell>
-                        <TableCell>Reason</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {r.rejected.map((x) => (
-                        <TableRow key={x.curve}>
-                          <TableCell sx={{ fontFamily: 'monospace' }}>{x.curve}</TableCell>
-                          <TableCell>{x.reason}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </Paper>
-            </Grid>
-          </Grid>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6">Scores (all curves, highest first)</Typography>
-            <ScoresTable scores={r.scores} selected={r.selected} />
-          </Paper>
+          <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'minmax(0, 3fr) minmax(0, 2fr)' }, mb: 3 }}>
+            <QcTable rows={rows} checked={checked} plotted={plotted}
+              onToggleChecked={(name) => setChecked((list) => toggle(list, name))}
+              onTogglePlotted={togglePlotted} />
+            <Box>
+              <DoiNoiseScatter rows={rows} checked={checked} onTogglePlotted={togglePlotted} />
+              <SelectionSummary rows={rows} checked={checked} saving={save.saving} saved={save.saved}
+                onRemove={(name) => setChecked((list) => list.filter((n) => n !== name))}
+                onReset={() => setChecked(qc.body.selected)} onSave={saveSelection} />
+            </Box>
+          </Box>
+          <Typography variant="subtitle2" gutterBottom>Curves vs measured depth</Typography>
+          <CurveTrackPlot key={run} run={run} names={plotted} statusOf={statusOf} />
         </>
       )}
-    </Stack>
+    </Paper>
   )
 }
 
