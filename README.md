@@ -3,7 +3,7 @@
 Resistivity QC and inversion platform for the Ekofisk well data.
 
 - **Backend:** Python, FastAPI (`backend/`). Health, run list, curve inventory, curve data, QC selection and 3D well path endpoints on the real Ekofisk data.
-- **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`). Pages: Overview (backend health, runs), Data (curve inventory and curves vs depth), QC selection (ranked table, DOI-noise scatter, depth tracks, saved selections), 3D well (one curve coloured along the real well path, with travel and zoom controls; open it with **3D** on a QC row or a selection chip, or bookmark `?tab=3d&run=<run>&curve=<curve>`), and Modelling (UDAR), which runs the UDAR_Bench 1D forward model and inversion in the browser.
+- **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`). Pages: Overview (backend health, runs), Data (curve inventory and curves vs depth), QC selection (ranked table, DOI-noise scatter, depth tracks, saved selections), 3D well (one curve along the real well path with a DOI-sized tube, compare, inversion layers, field view, demo and PNG export; see [3D well tab](#3d-well-tab)), and Modelling (UDAR), which runs the UDAR_Bench 1D forward model and inversion in the browser.
 - **Data:** Ekofisk DLIS files in `data/`, with the reference notebook `view_resistivity_data_ekofisk.ipynb`.
 - **UDAR_Bench:** David's standalone browser example for 1D and 2.5D forward modeling and inversion (`UDAR_Bench/`). The single-file `UDAR_Bench.html` is not in the repo; build it with `node build/build.js` in `UDAR_Bench/source/` and open `UDAR_Bench/source/build/udar.html` in Chrome. The frontend uses an unchanged copy of its compute core (`frontend/src/compute/udar/`).
 
@@ -37,6 +37,25 @@ See [docs/inversion/RESEARCH_SUMMARY.md](docs/inversion/RESEARCH_SUMMARY.md) for
 Run the misfit study: `python -m backend.inversion.misfit_study --well Z-20 --md-min 20100 --md-max 20500 --output out/z20`.
 
 In the app, the **Inversion** tab inverts the curves chosen on the **QC selection** tab (button *Invert this selection →*) and shows the layered model, a curtain section, and measured vs modelled logs.
+
+## 3D well tab
+
+The **3D well** tab draws one QC curve along the real well path (UTMX/UTMY + TVD), in the QC tab's colours. The tube radius is a per-sample depth of investigation (DOI) estimate: skin depth `503·√(ρ/f)`, softly capped at 3 transmitter–receiver spacings. For 32-bin images the ring bulges toward the resistive (red) bins; ZG geosignals take that shape from the matching ZR image. Open it with **3D** on a QC row, a selection chip, or `?tab=3d&run=<run>&curve=<curve>`.
+
+| Control | What it does |
+|---------|--------------|
+| **Back / Play / Forward**, MD slider, **Follow / Free** | Travel along the well; Follow keeps the camera behind the travel point |
+| **Compare with** | Adds a second curve: the shallower one is the solid inner tube, the deeper one a transparent shell, each with its own colour bar |
+| **Inversion layers** | Shows the newest finished job from the **Inversion** tab as dipping boundary ribbons; a magenta glow marks where a boundary is within the curve's DOI, and the panel gives the nearest-boundary distance |
+| **Single well / Field** | Field draws all 11 runs at their UTM positions; hover highlights a well, a click opens it |
+| **★ Demo** | Scripted fly-through with captions at the most resistive and most conductive zone, the largest DOI spread (image curves) and TD; **Stop demo** or Escape ends it |
+| **Save PNG** | Downloads `<run>_<curve>_<md>ft.png` of the 3D canvas; `window.__well3dSnapshot()` returns the same image as a data URL |
+
+Inversion jobs live in backend memory, so run an inversion after each backend restart before turning on the layers. The DOI is an estimate, not a vendor figure; see [docs/plans/well-3d-view.md](docs/plans/well-3d-view.md) for the assumptions.
+
+![Compare with: ARH16P inner tube inside the ZRL48A shell on Z-19](docs/screenshots/well3d-compare.png)
+
+![Inversion layers on VC-2 with the magenta seen-boundary glow](docs/screenshots/well3d-layers.png)
 
 ## Documentation
 
