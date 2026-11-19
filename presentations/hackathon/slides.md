@@ -49,9 +49,9 @@ title: What we built
 | Step | What you get |
 |------|--------------|
 | Data | Curve inventory, curves vs depth |
-| QC selection | Ranked table, DOI-noise scatter, depth tracks |
+| QC | Ranked table, DOI-noise scatter, depth tracks |
 | Modelling | UDAR 1D forward model and inversion |
-| 3D well | QC curve along the real well path *(in progress)* |
+| 3D well | Curve on the well path, DOI-sized tube *(in progress)* |
 
 </div>
 </div>
@@ -62,6 +62,8 @@ title: What we built
 - QC: scores each curve, keeps 5–10, explains every rejection; stable JSON contract between backend and UI.
 - Modelling: unchanged copy of the UDAR_Bench compute core running in a web worker.
 - 3D well: one QC curve drawn along the real UTM/TVD path with the same colour scale as the QC tab.
+  Tube thickness follows the curve's QC depth of investigation, so deep curves show a wider sensed volume
+  (an estimate scaled from the relative DOI index, not a measured reach).
 Update this slide as features land.
 -->
 
