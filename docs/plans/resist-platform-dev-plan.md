@@ -31,7 +31,7 @@ Build a resistivity QC and inversion platform on the Ekofisk data in the `dylanp
 3. `SETUP.md` gives working commands for Mac and Windows, and a developer who has not seen the project can start backend and frontend within 30 minutes of cloning.
 4. A data-loading path reads the Ekofisk DLIS files in `data/` and produces a tidy curve table with depth, units, and well identifiers.
 5. A reverse-engineering tool documents the Ekofisk file structure (curve mnemonics, units, depth reference, null values) well enough to map raw curves to inversion inputs.
-6. The QC skill takes about 50 candidate curves and returns a ranked selection of 5 to 6 curves for inversion, with the reason for each keep or drop.
+6. The QC skill takes about 50 candidate curves and returns a ranked selection of 5 to 10 curves for inversion, with the reason for each keep or drop.
 7. The QC output is a stable JSON contract that the backend exposes and the frontend can display.
 8. The repo has a `.gitignore` that excludes local venv, `node_modules`, build output, IDE files, and local hackathon artifacts.
 
@@ -43,7 +43,7 @@ Build a resistivity QC and inversion platform on the Ekofisk data in the `dylanp
 |-------|-----------|-------------------|
 | **Ove** | Backend and frontend setup | Python backend skeleton, JavaScript frontend skeleton, health endpoints, `SETUP.md` for Mac and Windows, `.gitignore`, run and test commands |
 | **David** | Data analysis and reverse-engineering tool | DLIS loader, curve inventory of the Ekofisk files, mapping from raw curves to inversion inputs, documented data format |
-| **Dylan** | QC skill for curve selection | Curve quality scoring, selection of 5 to 6 curves from about 50, selection rationale, QC JSON output |
+| **Dylan** | QC skill for curve selection | Curve quality scoring, selection of 5 to 10 curves from about 50, selection rationale, QC JSON output |
 
 Each owner works in their own branch and merges to `main` when their step passes its verification.
 
@@ -54,7 +54,7 @@ Each owner works in their own branch and merges to `main` when their step passes
 Define these first so the three can work in parallel.
 
 1. **Curve table (David → Dylan, Ove):** a pandas DataFrame or CSV with columns `well`, `curve`, `unit`, `depth_ref`, `depth_m`, `value`, plus a per-curve metadata table with `curve`, `unit`, `null_value`, `description`.
-2. **QC selection (Dylan → Ove):** JSON with `selected` (list of 5 to 6 curve names), `rejected` (list of `{curve, reason}`), `scores` (map of curve to score and metrics).
+2. **QC selection (Dylan → Ove):** JSON with `selected` (list of 5 to 10 curve names), `rejected` (list of `{curve, reason}`), `scores` (map of curve to score and metrics).
 3. **Backend endpoints (Ove):**
    - `GET /health` returns `{status: "ok"}`
    - `GET /curves` returns the curve inventory from David's loader
@@ -110,13 +110,13 @@ Define these first so the three can work in parallel.
 
 ### Step 6: Curve Selection QC Skill (Dylan)
 
-**Files:** `backend/qc/selection.py`, `backend/qc/metrics.py`, `backend/tests/test_qc_selection.py` — **Verify:** on the Ekofisk inventory the skill returns 5 to 6 curves with a rationale for each keep and drop.
+**Files:** `backend/qc/selection.py`, `backend/qc/metrics.py`, `backend/tests/test_qc_selection.py` — **Verify:** on the Ekofisk inventory the skill returns 5 to 10 curves with a rationale for each keep and drop.
 
 - Start from the about 50 candidate curves in the curve table.
 - Score each curve on data quality: coverage (fraction of non-null samples), noise level, gaps, and physical plausibility of the value range.
 - Score each curve on relevance to resistivity: exclude curves that do not carry resistivity information, and keep the ones that do.
 - Remove redundant curves (highly correlated pairs), keeping the better-scored one.
-- Select the top 5 to 6 and return the QC JSON from the contract, with a reason for every rejected curve.
+- Select the top 5 to 10 and return the QC JSON from the contract, with a reason for every rejected curve.
 - Unit test the scoring on small synthetic tables with known outcomes.
 
 ### Step 7: Connect Backend to Data and QC (Ove, with David and Dylan)
@@ -147,7 +147,7 @@ Define these first so the three can work in parallel.
 **Files:** to be decided — **Verify:** not in scope for this work plan.
 
 - The 1D forward model and 1D/2D inversion are planned later, once the curve selection output is stable.
-- The inversion will take the 5 to 6 selected curves as input.
+- The inversion will take the 5 to 10 selected curves as input.
 
 ---
 

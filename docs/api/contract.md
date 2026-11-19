@@ -37,20 +37,26 @@ Curve metadata table, one row per curve:
 
 ## QC selection JSON (Dylan → Ove)
 
-Returned by `POST /qc/select`.
+Returned by `POST /qc/select`, one result per run. Produced by `backend/qc/selection.py`.
 
 ```json
 {
-  "selected": ["RT", "RXO", "..."],
-  "rejected": [{"curve": "GR", "reason": "no resistivity information"}],
-  "scores": {"RT": {"score": 0.92, "coverage": 0.98, "noise": 0.03, "range_ok": true}}
+  "well": "2/4-Z-6",
+  "run": "2_4-Z-6_16954-20950ft_RES_GEOSIGNAL",
+  "selected": ["ARM66P", "ZGM80P", "..."],
+  "selected_reasons": {"ARM66P": "best clean deep AR curve"},
+  "rejected": [{"curve": "GR", "reason": "no resistivity or geosignal information"}],
+  "scores": {"ARM66P": {"score": 0.31, "coverage": 1.0, "noise": 0.52, "range_ok": true,
+                        "quality": 0.48, "doi_index": 8.25, "doi_tier": "deep", "...": "..."}},
+  "warnings": ["no usable deep ZG curve in this run"]
 }
 ```
 
 Rules:
-- `selected` has 5 to 6 entries.
+- `selected` has 5 to 10 entries (default 8); fewer only with a warning.
 - Every curve in the inventory appears in exactly one of `selected` or `rejected`.
-- `scores` covers every curve in the inventory.
+- `scores` covers every curve in the inventory. `noise` is jaggedness: below 0.5 smooth, 1 white noise.
+- `warnings` lists noisy curves kept as deep fallbacks and depth tiers with no usable curve.
 
 ## Endpoints (Ove)
 
