@@ -100,32 +100,45 @@ class JaxADRTests(unittest.TestCase):
             np.testing.assert_allclose(J[:, :, j], fd, rtol=1e-4, atol=1e-6)
 
 
-@unittest.skipUnless(HAVE_JAX and os.environ.get("RESIST_SLOW_TESTS"), "slow (compiles the batched LM)")
-class BatchedLMTests(unittest.TestCase):
-    def test_batched_lm_recovers_boundary_from_wrong_side_start(self):
-        from backend.inversion.batched import solver, window_arrays
-        from backend.inversion.invert import FitConfig, IntervalData, Layout
+@unittest.skipUnless(HAVE_JAX and os.environ.get("RESIST_SLOW_TESTS"), "slow (compiles the vmapped Jacobian)")
+class LockstepTests(unittest.TestCase):
+    def test_concurrent_fits_match_direct_fits(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from backend.inversion.invert import FitConfig, IntervalData, Inverter
         from backend.inversion.jax_forward import shared_jax_forward
+        from backend.inversion.lockstep import LockstepBatcher
         fwd = ADRForward(azimuthal=True)
         labels = fwd.channel_labels()
-        traj = horizontal_traj(np.linspace(-0.6, 0.6, 12) * FT)
-        truth = LayerModel(np.array([4.0]) * FT, np.array([8.0, 40.0]), np.array([12.0, 60.0]), 0.0, 0.0)
-        obs = shared_jax_forward(fwd).predict(truth, traj)
-        data = IntervalData("syn", traj.md_ft, traj, obs, labels, np.zeros(12), np.zeros(3), traj.ned[:, 2] / FT)
         use = {"ARM16P", "ZRL48PT", "ZRL48PB", "ZRM48PT", "ZRM48PB", "ZGM112PT"}
         weights = {lab: float(lab in use) for lab in labels}
         sigma = {lab: (0.02 if u == "log" else 0.5 if u == "deg" else 0.05) for lab, u in zip(labels, fwd.units())}
-        cfg = FitConfig(n_layers=2, fit_dip=False, curve_weights=weights, curve_sigma=sigma, azimuthal=True)
-        lay = Layout(cfg, len(labels), 0.0)
-        lo, hi = lay.bounds(-45.0, 45.0)
-        win = window_arrays(data, weights, sigma, None, lo, hi, dip_az=0.0)
-        fn = solver(fwd, 2, lay.n_aniso, False, iters=30)
-        import jax.numpy as jnp
-        from backend.inversion.batched import stack
-        x, c, chi, _ = fn(jnp.asarray([[-6.0, 1.3, 1.3, 0.1]]), stack([win]))      # start: boundary above the well
-        m = lay.model(np.asarray(x)[0])
-        self.assertAlmostEqual(m.boundaries_m[0] / FT, 4.0, delta=0.3)
-        self.assertLess(float(chi[0]), 0.5)
+        cfg = FitConfig(n_layers=2, fit_dip=False, curve_weights=weights, curve_sigma=sigma, azimuthal=True,
+                        compute="jax", max_nfev=8)
+        windows = []
+        for z, bound in ((0.0, 4.0), (0.3, -3.0)):
+            traj = horizontal_traj(z + np.linspace(-0.5, 0.5, 5) * FT)
+            truth = LayerModel(np.array([bound]) * FT, np.array([8.0, 40.0]), np.array([12.0, 60.0]), 0.0, 0.0)
+            obs = shared_jax_forward(fwd).predict(truth, traj)
+            windows.append(IntervalData("syn", traj.md_ft, traj, obs, labels, np.zeros(5), np.zeros(3),
+                                        traj.ned[:, 2] / FT))
+        x0 = np.array([1.0, 1.0, 1.4, 0.1])
+
+        def direct(data):
+            with Inverter(data, cfg) as inv:
+                return inv.fit(x0)
+
+        expected = [direct(d) for d in windows]
+        with LockstepBatcher(fwd, 2, 1, False, 8, max_batch=4) as batcher:
+            def lockstep(data):
+                with batcher.worker(), Inverter(data, cfg, theory_factory=batcher.theory) as inv:
+                    return inv.fit(x0)
+
+            with ThreadPoolExecutor(2) as pool:
+                got = list(pool.map(lockstep, windows))
+            calls = batcher.calls
+        for e, g in zip(expected, got):
+            np.testing.assert_allclose(g.x, e.x, rtol=1e-9, atol=1e-9)
+        self.assertLess(calls, sum(e.nfev for e in expected) * 2)             # requests were shared, not serial
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from its neighbour, so neighbouring windows overlap and the curtain can show the
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 import re
 import threading
@@ -52,6 +53,7 @@ DEFAULT_SLICE_FT = 4.0
 DEFAULT_WINDOW_FT = 20.0
 MAX_SLICES = 300
 MIN_WINDOW_STATIONS = 3
+NEIGHBOUR_SWEEPS = 100      # lockstep (GPU) only: cap on neighbour-restart sweeps (they stop when no slice improves)
 
 
 def compute_backend() -> str:
@@ -71,6 +73,15 @@ def compute_precision() -> int:
     """JAX float precision (RESIST_PRECISION=32 for cheap GPUs; phase and geosignals pass the FP32 gate)."""
     import os
     return 32 if os.environ.get("RESIST_PRECISION", "64") == "32" else 64
+
+
+def use_lockstep() -> bool:
+    """Solve all slices together through the LockstepBatcher: on a GPU, or when RESIST_BATCH is set."""
+    import os
+    if compute_backend() != "jax":
+        return False
+    import jax
+    return jax.devices()[0].platform == "gpu" or bool(os.environ.get("RESIST_BATCH"))
 
 
 def compute_device() -> str:
@@ -290,7 +301,7 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
         count[0] += 1
         if job is not None:
             job.progress = min(0.99, count[0] / budget)
-            job.message = f"slice {current[0] + 1}/{len(centres)} · forward evaluation {count[0]}"
+            job.message = f"slice {current[0] + 1}/{len(centres)} Â· forward evaluation {count[0]}"
 
     t0 = time.time()
     cfg = FitConfig(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal,
@@ -299,11 +310,13 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
     pred = np.full(data.obs.shape, np.nan)
     owner = np.argmin(np.abs(data.md_ft[:, None] - centres[None, :]), axis=1)
     slices, models, x_prev, chi_prev, total_nfev = [], {}, None, np.inf, 0
-    if cfg.compute == "jax":
+    if use_lockstep():
         total_nfev = _run_slices_batched(data, cfg, centres, owner, window_ft, slice_ft, sigma, lc, w, weights,
                                          request["quick"], pred, slices, models, job, well_path)
     else:
-        with worker_pool(data.traj, WORKERS, azimuthal=azimuthal) as pool:
+        # JAX on a CPU: the sequential warm-start loop with the exact Jacobian (no process pool needed)
+        pool_ctx = contextlib.nullcontext() if cfg.compute == "jax" else worker_pool(data.traj, WORKERS, azimuthal=azimuthal)
+        with pool_ctx as pool:
             for s, c in enumerate(centres):
                 current[0] = s
                 idx = np.flatnonzero(np.abs(data.md_ft - c) <= window_ft / 2 + 1e-6)
@@ -345,81 +358,94 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
 
 def _run_slices_batched(data, cfg, centres, owner, window_ft, slice_ft, sigma, lc, w, weights, quick, pred, slices,
                         models, job, well_path) -> int:
-    """All slices at once with the batched JAX LM (GPU when available), filling ``pred``, ``slices`` and ``models``
-    like the sequential CPU loop; returns the number of LM iterations run.
+    """All slices at once on the JAX device, filling ``pred``, ``slices`` and ``models`` like the sequential CPU loop;
+    returns the number of forward evaluations.
 
-    Pass 1 fits every slice from the default starts. Pass 2 restarts each slice from its neighbours' best models,
-    the batched analogue of the CPU warm start, and keeps whichever fits better."""
-    from backend.inversion.batched import default_chunk, pad_size, solve_chunked, solver, window_arrays
+    Every slice runs the same TRF multi-start fit as the CPU path in its own thread; a ``LockstepBatcher`` evaluates
+    the theory/Jacobian requests of all running fits in one vmapped call. Pass 1 fits every slice from the default
+    starts; pass 2 restarts each slice from its neighbours' best models (the batched analogue of the CPU warm
+    start), sweeping until no slice improves (at most ``NEIGHBOUR_SWEEPS``), and keeps whichever fits better."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from backend.inversion.jax_forward import pad_stations
+    from backend.inversion.lockstep import LockstepBatcher
 
     labels, k = data.labels, cfg.n_layers
-    iters = 10 if quick else 20
-    wins = []
+    prep = []
     for s, c in enumerate(centres):
         idx = np.flatnonzero(np.abs(data.md_ft - c) <= window_ft / 2 + 1e-6)
         if idx.size >= MIN_WINDOW_STATIONS:
-            wins.append((s, c, idx))
-    if not wins:
+            prep.append(SimpleNamespace(s=s, c=c, idx=idx, sub=data.subset(idx), res=None, entry=None))
+    if not prep:
         return 0
-    size = pad_size(max(idx.size for _, _, idx in wins))
-    prep = []
-    for s, c, idx in wins:
-        sub = data.subset(idx)
-        az = float(np.rad2deg(np.arctan2(sub.traj.axis[:, 1].mean(), sub.traj.axis[:, 0].mean())))
-        lay = Layout(cfg, len(labels), az)
-        tvd = sub.tvd_rel_ft(sub.tvd_ft)
-        lo, hi = lay.bounds(tvd.min() - 40, tvd.max() + 40)
-        shim = SimpleNamespace(lay=lay, cfg=cfg)
-        shim.x_from = lambda *a, _s=shim: Inverter.x_from(_s, *a)
-        starts = [np.clip(x, lo + 1e-9, hi - 1e-9) for x in default_starts(shim, sub, k, weights=w)]
-        prep.append(SimpleNamespace(s=s, c=c, idx=idx, sub=sub, lay=lay, lo=lo, hi=hi, starts=starts,
-                                    win=window_arrays(sub, weights, sigma, lc, lo, hi, size=size, dip_az=az),
-                                    cost=np.inf, x=None, pred=None, entry=None))
-    fn = solver(ADRForward(azimuthal=cfg.azimuthal), k, prep[0].lay.n_aniso, cfg.fit_dip, iters=iters)
-    chunk = default_chunk()
-    n_first = sum(len(p.starts) for p in prep)
-    budget, done = n_first + 2 * len(prep), [0]
+    size = pad_stations(max(p.idx.size for p in prep))
+    fwd = ADRForward(azimuthal=cfg.azimuthal, **(cfg.forward_options or {}))
+    lock = threading.Lock()
+    count, finished, budget = [0], [0], [2 * len(prep)]
+
+    def tick(inv, x, r):
+        with lock:
+            count[0] += 1
 
     def publish():
-        ready = [p for p in prep if p.entry is not None]
+        ready = [p.entry for p in prep if p.entry is not None]
         if job is None or not ready:
             return
-        job.progress = min(0.99, done[0] / budget)
-        job.message = f"batched slices on {compute_device()}: {done[0]}/{budget} fits"
-        chis = [p.entry["misfit_normalised"] for p in ready if p.entry["misfit_normalised"] is not None]
-        job.partial = {**well_path, "slice_ft": slice_ft, "window_ft": window_ft, "slices": [p.entry for p in ready],
-                       "evaluation": done[0], "slice": len(ready), "n_slices": len(centres),
+        job.progress = min(0.99, finished[0] / budget[0])
+        job.message = f"{finished[0]}/{budget[0]} slice fits on {compute_device()} ? forward evaluation {count[0]}"
+        chis = [e["misfit_normalised"] for e in ready if e["misfit_normalised"] is not None]
+        job.partial = {**well_path, "slice_ft": slice_ft, "window_ft": window_ft, "slices": ready,
+                       "evaluation": count[0], "slice": len(ready), "n_slices": len(centres),
                        "misfit_normalised": round(float(np.median(chis)), 2) if chis else None}
 
-    def run(problems):
-        for start in range(0, len(problems), chunk):
-            part = problems[start:start + chunk]
-            x, cost, _, pr = solve_chunked(fn, np.array([x0 for _, x0 in part]), [p.win for p, _ in part], chunk)
-            for (p, _), xi, ci, pi in zip(part, x, cost, pr):
-                if np.isfinite(ci) and ci < p.cost:
-                    n = p.idx.size
-                    p.cost, p.x, p.pred = float(ci), xi, pi[:n]
-                    chi = _chi(SimpleNamespace(residual=p.sub.obs - p.pred), sigma, labels, w)
-                    p.entry = _slice_entry(data, p.lay.model(xi), p.idx, p.c, slice_ft, chi)
-            done[0] += len(part)
+    def solve(p, starts_of, batcher):
+        res = None
+        with batcher.worker():
+            with Inverter(p.sub, cfg, on_eval=tick, theory_factory=batcher.theory) as inv:
+                starts = starts_of(inv)
+                if starts:
+                    try:
+                        res = inv.multistart(starts)
+                    except ValueError:
+                        res = None
+        with lock:
+            if res is not None and (p.res is None or res.cost < p.res.cost):
+                p.res = res
+                p.entry = _slice_entry(data, res.model, p.idx, p.c, slice_ft, _chi(res, sigma, labels, w))
+            finished[0] += 1
             publish()
 
-    run([(p, x0) for p in prep for x0 in p.starts])
-    second = []
-    for i, p in enumerate(prep):
-        for q in (prep[i - 1] if i else None, prep[i + 1] if i + 1 < len(prep) else None):
-            if q is not None and q.x is not None and (p.x is None or not np.allclose(q.x, p.x)):
-                second.append((p, np.clip(q.x, p.lo + 1e-9, p.hi - 1e-9)))
-    budget = done[0] + len(second)
-    run(second)
+    def neighbours(i, frozen):
+        def starts_of(inv):
+            mine = frozen[i]
+            return [x for j, x in ((i - 1, frozen.get(i - 1)), (i + 1, frozen.get(i + 1)))
+                    if x is not None and (mine is None or not np.allclose(x, mine))]
+        return starts_of
+
+    with LockstepBatcher(fwd, k, Layout(cfg, len(labels), 0.0).n_aniso, cfg.fit_dip, size,
+                         precision=cfg.precision) as batcher, \
+            ThreadPoolExecutor(max_workers=min(len(prep), 128)) as threads:
+        list(threads.map(lambda p: solve(p, lambda inv: default_starts(inv, p.sub, k, weights=w), batcher), prep))
+        # Neighbour sweeps: a good model spreads one slice per sweep, like the CPU warm-start chain.
+        changed = set(range(len(prep)))
+        for _ in range(NEIGHBOUR_SWEEPS):
+            todo = sorted({j for i in changed for j in (i - 1, i + 1) if 0 <= j < len(prep)})
+            if not todo:
+                break
+            frozen = {i: (p.res.x if p.res is not None else None) for i, p in enumerate(prep)}
+            before = {i: (p.res.cost if p.res is not None else np.inf) for i, p in enumerate(prep)}
+            with lock:
+                budget[0] = finished[0] + len(todo)
+            list(threads.map(lambda i: solve(prep[i], neighbours(i, frozen), batcher), todo))
+            changed = {i for i in todo if prep[i].res is not None and prep[i].res.cost < before[i] * (1 - 1e-3)}
     for p in prep:
-        if p.x is None:
+        if p.res is None:
             continue
-        models[p.s] = p.lay.model(p.x)
+        models[p.s] = p.res.model
         mine = owner[p.idx] == p.s
-        pred[p.idx[mine]] = p.pred[mine]
+        pred[p.idx[mine]] = p.res.pred[mine]
         slices.append(p.entry)
-    return done[0] * iters
+    return count[0]
 
 
 def slice_centres(md_min: float, md_max: float, slice_ft: float) -> np.ndarray:

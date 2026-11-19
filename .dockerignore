@@ -1,0 +1,5 @@
+**
+!backend/**
+backend/output/**
+backend/tests/**
+**/__pycache__/**

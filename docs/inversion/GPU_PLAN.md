@@ -1,46 +1,57 @@
 # Plan: GPU acceleration of the 1D (1.5D) inversion workflow
 
-## Status (paused 2026-11-19, branch `feature/gpu-jax`)
+## Status (branch `feature/gpu-jax`, main merged in on 2026-11-19)
+
+Main now inverts an interval as **slices** (default 4 ft): each slice is a separate 1.5D fit on a sliding data window
+(default 20 ft) centred on it, warm-started from the previous slice. ZR/ZG inputs are 90-degree **quadrant sectors**
+(`backend/data/quadrants.py`). The JAX work follows that design; the earlier separate "scan" mode is gone.
 
 **Done**
-- **Phase 1:** transform tables are built once per process and handed to workers. CPU baseline is **296 s**
-  (Z-20 20300–20400 ft, 26 stations, 14 channels, 3 layers, Quick; `python -m backend.inversion.benchmark`).
-- **Phases 2–3:** `backend/inversion/jax_forward.py` ports the UDAR_Bench layered-TIV engine to JAX, with
-  displacement currents and the full ADR channel set. Parity:
+- **Phase 1:** transform tables are built once per process and handed to the process-pool workers.
+- **Phases 2?3:** `backend/inversion/jax_forward.py` ports the UDAR_Bench layered-TIV engine to JAX, with
+  displacement currents and the full ADR channel set, including main's quadrant-sector bins (three receiver axes,
+  mirror pairing per bin, conductivity mean over the sector, long-spacing and geosignal sectors). Parity:
   - Tensor vs the closed-form whole-space solution: 2e-16.
   - Tensor vs empymod (analytical direct field): 4e-13.
-  - All 70 ADR channels vs the empymod path: ≤ 4e-10 %.
-- **empymod path fixes:** `xdirect=True` with standard DLF, and tables built for a horizontal tool. The old
-  numerical direct field and zero-offset tables were off by up to about 2e-4 dB, which is several % in
-  attenuation-derived resistivity at high resistivity.
-- **FP32 gate:** raw FP32 errors are ≤ 1e-5° and ≤ 7e-5 dB, which passes for phase and geosignals. Attenuation
-  resistivity above about 30 Ω·m can shift about 1%. FP64 is the default; set `RESIST_PRECISION=32` for T4/A10/L4.
-- **Phase 4:** `RESIST_COMPUTE=jax` gives an exact `jacfwd` Jacobian with no process pool. Compiled kernels are
-  bucketed to 32-station shapes and cached on disk (`~/.cache/resist-jax`, or `RESIST_JAX_CACHE`).
-  On CPU: **73 s** warm / 108 s cold, vs 296 s, with the same answer.
-- **Phase 5 (partly done):** `backend/inversion/batched.py` is a vmapped bounded LM using a column-wise JVP
-  Jacobian, with memory-bounded chunks (`RESIST_SCAN_CHUNK`).
-  - `service.run_scan` runs sliding windows × 3 starts, picks the best start, stitches a per-station curtain and
-    publishes a live partial result.
-  - API: `mode="scan"`, `window_ft` and `overlap` on `/inversion/jobs`; `/inversion/defaults` reports `device`
-    and `scan_available`.
-  - Tested on CPU: 3 windows × 3 starts on 100 ft took 349 s.
-- **Tests:** `backend/tests/test_jax_forward.py` has 4 fast parity tests (passing) and 1 slow batched-LM test
-  (`RESIST_SLOW_TESTS=1`), currently failing (see below). All other 76 backend tests pass.
+  - All ADR channels vs the empymod path: ? 1e-8 (log10 ohm-m, deg, dB).
+- **empymod path fixes:** `xdirect=True` with standard DLF (via `_bipole`), and tables built for a horizontal tool.
+- **FP32 gate:** raw FP32 errors are ? 1e-5? and ? 7e-5 dB, which passes for phase and geosignals. Attenuation
+  resistivity above about 30 ??m can shift about 1%. FP64 is the default; set `RESIST_PRECISION=32` for T4/A10/L4.
+- **Phase 4:** `RESIST_COMPUTE=jax` gives the `Inverter` an exact `jacfwd` Jacobian and no process pool. Compiled
+  kernels are padded to 8/16/24/32 stations (then multiples of 32) and cached on disk (`~/.cache/resist-jax`, or
+  `RESIST_JAX_CACHE`). On a CPU the sliced run uses main's sequential warm-start loop with this Jacobian.
+- **Phase 5:** `backend/inversion/lockstep.py`. Every slice runs the **same scipy TRF multi-start** as the CPU path, in
+  its own thread; a `LockstepBatcher` collects the theory/Jacobian requests of all running fits and evaluates them in
+  one vmapped call (`RESIST_BATCH` = max batch, default 64 on GPU, 8 on CPU). After the multi-start pass, up to
+  `NEIGHBOUR_SWEEPS` sweeps restart the neighbours of every slice that improved from its best model (the batched
+  analogue of the warm start), until no slice improves. Used on a GPU, or on a CPU when `RESIST_BATCH` is set.
+  - A hand-written vmapped LM (`batched.py`) was tried first and removed: it stalled at bounds and in local minima
+    (cost 68?210 vs 61 for TRF on the same Z-20 slice), so the optimiser stays scipy TRF and only the physics is batched.
+- **Phase 6 (backend + minimal UI):** `/inversion/defaults` reports `device` and `batched`; results carry `device`;
+  the Inversion page shows the compute device in the settings card and the result stats. The slice curtain, live
+  partial and ? band come from main unchanged.
+- **Tests:** `backend/tests/test_jax_forward.py`: 4 fast parity tests and 1 slow lockstep test
+  (`RESIST_SLOW_TESTS=1`: concurrent fits through the batcher equal direct fits). All backend tests pass.
 
-**Resume here tomorrow**
-1. **Batched LM local minimum.** A single start on the wrong side converges to 10.3 ft (truth 4 ft).
-   - Run the multi-start check: starts −6, +0.5, +2 and +6 ft in the slow test setup.
-   - If the best start recovers the truth, change the test to multi-start, as the service does.
-   - If not, add a coarse grid over the first boundary, or more LM iterations and damping restarts.
-2. **Phase 6, UI:**
-   - Mode switch (single window / sliding-window scan) with a window-length field.
-   - Scan curtain as a heatmap of log Rh within the ±band around the well, plus well path and boundaries.
-   - Live partial curtain for scans, and the compute device shown in the settings card.
-3. **Phase 7, Azure:** Dockerfile (CUDA 12, `jax[cuda12]`), push to ACR, NC T4 v3 or NV A10 v5 VM, DLIS via Blob
-   (blobfuse2), `RESIST_WORKER_URL` job forwarding from the local backend, and auto-shutdown. Then run the
-   benchmark on the GPU (FP64 and FP32).
-4. **Phase 8:** benchmark table (CPU empymod, CPU JAX, Azure GPU), update `HACKATHON_PLAN.md` and the API
+**Benchmarks** (Z-20 20300?20340 ft, 4 ft slices / 20 ft windows, 11 stations, 14 channels, 3 layers, Quick;
+`python -m backend.inversion.benchmark --md-max 20340`, laptop CPU, no GPU)
+
+| Backend | Time | Misfit/noise | Notes |
+|---|---|---|---|
+| CPU empymod, process pool (main) | 430 s | 1.52 | sequential warm start |
+| JAX on CPU, exact Jacobian | **66 s** | 1.52 | same slices and model as empymod |
+| JAX lockstep on CPU (`RESIST_BATCH=8`) | 515 s | 1.52 | the GPU path; no gain expected on a CPU |
+
+Lockstep quality depends on the neighbour sweeps: with one sweep the misfit was 1.85, with four 1.76, and with
+sweeps until no slice improves 1.52 (same as the warm-start chain).
+
+**Next**
+1. **Phase 7, Azure (code ready, not deployed):** `deploy/gpu-worker/` has the Dockerfile (`jax[cuda12]`) and the
+   step-by-step guide (ACR build, Blob + blobfuse2, NC T4 v3 / NV A10 v5 VM, SSH tunnel, auto-shutdown). With
+   `RESIST_WORKER_URL` set the local backend forwards inversion jobs to the worker (`backend/inversion/remote.py`,
+   tested with a mocked worker). Needs an Azure subscription and the `az` CLI (not installed on the laptop). Then
+   benchmark lockstep on the GPU (FP64 and FP32) on 400 ft and longer intervals.
+2. **Phase 8:** final benchmark table (CPU empymod, CPU JAX, Azure GPU), update `HACKATHON_PLAN.md` and the API
    contract, then merge `feature/gpu-jax` into `main` after review.
 
 Note: WSL2 is not installed on the laptop, so local JAX is CPU only. GPU runs need Azure (or `wsl --install`).

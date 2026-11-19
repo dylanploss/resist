@@ -1,5 +1,7 @@
+import os
 import time
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 import numpy as np
@@ -85,6 +87,30 @@ class LayersApiTests(unittest.TestCase):
         self.add_job("t_run", "runA", status="running")
         self.assertEqual(self.client.get("/inversion/jobs/t_run/layers").status_code, 409)
         self.assertEqual(self.client.get("/inversion/jobs/nope/layers").status_code, 404)
+
+
+class WorkerForwardingTests(unittest.TestCase):
+    def test_jobs_go_to_the_worker_and_errors_keep_their_status(self):
+        client = TestClient(app)
+        calls = []
+
+        def fake_request(method, url, **kwargs):
+            calls.append((method, url, kwargs.get("json"), kwargs.get("params")))
+            if url.endswith("/inversion/jobs/missing"):
+                return mock.Mock(status_code=404, json=lambda: {"error": "unknown inversion job: missing"})
+            return mock.Mock(status_code=200, json=lambda: {"id": "w1", "status": "queued"})
+
+        body = {"run": "runA", "curves": ["ARM16P"], "md_min_ft": 100.0, "md_max_ft": 140.0}
+        with mock.patch.dict(os.environ, {"RESIST_WORKER_URL": "http://gpu:5000/"}), \
+                mock.patch("backend.inversion.remote.httpx.request", side_effect=fake_request):
+            self.assertEqual(client.post("/inversion/jobs", json=body).json()["id"], "w1")
+            self.assertEqual(client.get("/inversion/jobs/w1").json()["status"], "queued")
+            missing = client.get("/inversion/jobs/missing")
+        self.assertEqual(missing.status_code, 404)
+        self.assertIn("unknown inversion job", missing.json()["error"])
+        self.assertEqual(calls[0][:2], ("POST", "http://gpu:5000/inversion/jobs"))
+        self.assertEqual(calls[0][2]["md_max_ft"], 140.0)
+        self.assertEqual(calls[1][:2], ("GET", "http://gpu:5000/inversion/jobs/w1"))
 
 
 if __name__ == "__main__":

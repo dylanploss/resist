@@ -1,4 +1,4 @@
-"""Time one inversion window end to end (same path as the Inversion tab).
+"""Time one sliced 1.5D inversion end to end (same path as the Inversion tab).
 
     python -m backend.inversion.benchmark                      # Z-20 20300-20400 ft, Quick, 3 layers
     RESIST_COMPUTE=jax python -m backend.inversion.benchmark --full
@@ -22,6 +22,8 @@ def main(argv=None):
     p.add_argument("--md-max", type=float, default=20400)
     p.add_argument("--step-ft", type=float, default=4.0)
     p.add_argument("--layers", type=int, default=3)
+    p.add_argument("--slice-ft", type=float, default=None)
+    p.add_argument("--window-ft", type=float, default=None)
     p.add_argument("--curves", default=",".join(DEFAULT_CURVES))
     p.add_argument("--full", action="store_true", help="full iterations instead of Quick")
     a = p.parse_args(argv)
@@ -32,7 +34,8 @@ def main(argv=None):
     run = runs.get_run(a.run)
     curves = a.curves.split(",")
     request = dict(run=a.run, curves=curves, md_min_ft=a.md_min, md_max_ft=a.md_max, step_ft=a.step_ft,
-                   layers=a.layers, calibration=True, quick=not a.full)
+                   layers=a.layers, calibration=True, quick=not a.full,
+                   slice_ft=a.slice_ft or service.DEFAULT_SLICE_FT, window_ft=a.window_ft or service.DEFAULT_WINDOW_FT)
     plan = service.build_plan(run, curves, True)
     t0 = time.time()
     result = service.run_inversion(run, request, plan)
@@ -42,10 +45,12 @@ def main(argv=None):
         "run": a.run, "md_ft": [a.md_min, a.md_max], "stations": result["stations"], "layers": a.layers,
         "channels_used": sum(c["used"] for c in result["curves"]), "quick": not a.full,
         "seconds": round(elapsed, 1), "misfit_normalised": result["misfit_normalised"],
+        "slices": len(result["slices"]),
+        "slice_misfit": [s["misfit_normalised"] for s in result["slices"]],
         "dip_deg": result["model"]["dip_deg"],
         "layers_rh": [l["rh"] for l in result["model"]["layers"]],
-        "boundaries_tvd_ft_at_centre": [l["bottom_tvd_ft"] for l in result["model"]["layers"][:-1]],
-    }, indent=1))
+        "boundaries_tvd_ft_median": [l["bottom_tvd_ft"] for l in result["model"]["layers"][:-1]],
+    }))
 
 
 if __name__ == "__main__":

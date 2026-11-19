@@ -75,7 +75,7 @@ Implemented in `backend/app.py` (data and QC), `backend/qc/api.py` (QC visualiza
 | GET | `/field` | query `max_points` per run (default 300, 50 to 2000) | `{"centre": {"east_m", "north_m"}, "color", "runs": [{"run", "well", "path_source", "stride", "md_range_ft", "curve", "md_ft", "east_m", "north_m", "tvd_m", "values"}], "skipped": [{"run", "reason"}]}` |
 | POST | `/runs/{run}/selection` | `{"curves": [..], "n_select": 8}` | Saved selection record |
 | GET | `/runs/{run}/selection` | none | Saved selection record (404 if none saved) |
-| GET | `/inversion/defaults` | query `run` | `{"run", "md_min_ft", "md_max_ft", "reason", "channels", "max_stations", "max_interval_ft"}` |
+| GET | `/inversion/defaults` | query `run` | `{"run", "md_min_ft", "md_max_ft", "reason", "channels", "max_stations", "max_interval_ft", "slice_ft", "window_ft", "max_slices", "device", "batched"}`; `device` names the compute backend (`RESIST_COMPUTE`), `batched` is true when all slices are solved together through the lockstep batcher (JAX on a GPU, or `RESIST_BATCH` set) |
 | POST | `/inversion/plan` | inversion request (below) | `{"used": [..], "ignored": [{"curve", "reason"}], "calibration", "warnings", "estimated_stations"}` |
 | POST | `/inversion/jobs` | inversion request (below) | Job: `{"id", "run", "status", "progress", "message", "request", "plan", "error", "elapsed_s", "result"}` |
 | GET | `/inversion/jobs/{id}` | none | Job; `result` is set when `status` is `done` |

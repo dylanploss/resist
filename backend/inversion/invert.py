@@ -307,10 +307,12 @@ class Inverter:
 
     ``cfg.compute == "cpu"``: empymod forward, finite-difference Jacobian over a process pool.
     ``cfg.compute == "jax"``: JAX forward (CPU or GPU) with the exact Jacobian from ``jax.jacfwd``; no process pool.
+    ``theory_factory(traj, dip_azimuth)``: any object with ``__call__(x)`` / ``jacobian(x)`` like ``JaxTheory``
+    (``lockstep.LockstepBatcher.theory`` batches many concurrent fits).
     """
 
     def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None,
-                 pool=None, station_idx=None):
+                 pool=None, station_idx=None, theory_factory=None):
         self.data, self.cfg = data, cfg
         self.on_eval = on_eval
         az = float(np.rad2deg(np.arctan2(data.traj.axis[:, 1].mean(), data.traj.axis[:, 0].mean())))
@@ -322,7 +324,9 @@ class Inverter:
         self._owns_pool, self._jax = False, None
         self.station_idx = None if station_idx is None else np.asarray(station_idx)
         self.pool = pool
-        if cfg.compute == "jax":
+        if theory_factory is not None:
+            self._jax = theory_factory(data.traj, az)            # e.g. a LockstepBatcher shared by many fits
+        elif cfg.compute == "jax":
             from backend.inversion.jax_forward import JaxTheory
 
             if cfg.fit_cross_dip:

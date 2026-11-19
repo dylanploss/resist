@@ -271,6 +271,11 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 Default interval: {defaults.data.reason}
               </Typography>
             )}
+            {defaults.data?.device && (
+              <Typography variant="caption" color="text.secondary" component="div">
+                Compute: {defaults.data.device}{defaults.data.batched ? ' · all slices solved in one batch' : ''}
+              </Typography>
+            )}
             {currentPlan && (
               <Typography variant="caption" color={tooMany ? 'error' : 'text.secondary'} component="div">
                 About {currentPlan.estimated_stations} stations, {currentPlan.estimated_slices} slices,
@@ -323,6 +328,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 <Stat label="Dip" value={`${result.model.dip_deg}° toward ${result.model.dip_azimuth_deg}°`} />
                 <Stat label="Stations" value={result.stations} />
                 <Stat label="Run time" value={`${result.elapsed_s}s`} />
+                {result.device && <Stat label="Compute" value={result.device} />}
               </Box>
               <Table size="small" sx={{ maxWidth: 640 }}>
                 <TableHead>

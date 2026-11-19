@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
-from backend.inversion import layers, service
+from backend.inversion import layers, remote, service
 from backend.services import runs
 
 router = APIRouter(prefix="/inversion")
@@ -39,10 +39,14 @@ class InversionRequest(BaseModel):
 @router.get("/defaults")
 def defaults(run: str) -> dict:
     well_run = runs.get_run(run)
-    return {"run": run, **service.suggested_interval(well_run), "channels": service.channel_labels(),
-            "max_stations": service.MAX_STATIONS, "max_interval_ft": service.MAX_INTERVAL_FT,
-            "slice_ft": service.DEFAULT_SLICE_FT, "window_ft": service.DEFAULT_WINDOW_FT, "max_slices": service.MAX_SLICES,
-            "device": service.compute_device(), "batched": service.compute_backend() == "jax"}
+    out = {"run": run, **service.suggested_interval(well_run), "channels": service.channel_labels(),
+           "max_stations": service.MAX_STATIONS, "max_interval_ft": service.MAX_INTERVAL_FT,
+           "slice_ft": service.DEFAULT_SLICE_FT, "window_ft": service.DEFAULT_WINDOW_FT, "max_slices": service.MAX_SLICES,
+           "device": service.compute_device(), "batched": service.use_lockstep(), "worker": remote.worker_url()}
+    if out["worker"]:
+        worker = remote.call("GET", "/inversion/defaults", params={"run": run})
+        out.update(device=worker["device"], batched=worker["batched"])
+    return out
 
 
 @router.post("/plan")
@@ -57,6 +61,8 @@ def plan(request: InversionRequest) -> dict:
 
 @router.post("/jobs")
 def submit(request: InversionRequest) -> dict:
+    if remote.worker_url():
+        return remote.call("POST", "/inversion/jobs", json=request.model_dump())
     well_run = runs.get_run(request.run)
     try:
         job = service.submit(request.run, well_run, request.model_dump())
@@ -68,11 +74,15 @@ def submit(request: InversionRequest) -> dict:
 @router.get("/jobs")
 def finished_jobs(run: str) -> dict:
     """Finished jobs of a run, newest first (no result payload); the 3D well tab picks one."""
+    if remote.worker_url():
+        return remote.call("GET", "/inversion/jobs", params={"run": run})
     return {"run": run, "jobs": [layers.job_summary(j) for j in service.finished_jobs(run)]}
 
 
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
+    if remote.worker_url():
+        return remote.call("GET", f"/inversion/jobs/{job_id}")
     job = service.get(job_id)
     if job is None:
         raise HTTPException(404, f"unknown inversion job: {job_id}")
@@ -82,6 +92,8 @@ def job_status(job_id: str) -> dict:
 @router.get("/jobs/{job_id}/layers")
 def job_layers(job_id: str) -> dict:
     """Boundary geometry of a finished job for the 3D well tab; see layers.boundary_geometry."""
+    if remote.worker_url():
+        return remote.call("GET", f"/inversion/jobs/{job_id}/layers")
     job = service.get(job_id)
     if job is None:
         raise HTTPException(404, f"unknown inversion job: {job_id}")
