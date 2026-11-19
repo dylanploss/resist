@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
-from backend.inversion import service
+from backend.inversion import layers, service
 from backend.services import runs
 
 router = APIRouter(prefix="/inversion")
@@ -53,9 +53,26 @@ def submit(request: InversionRequest) -> dict:
     return job.to_dict()
 
 
+@router.get("/jobs")
+def finished_jobs(run: str) -> dict:
+    """Finished jobs of a run, newest first (no result payload); the 3D well tab picks one."""
+    return {"run": run, "jobs": [layers.job_summary(j) for j in service.finished_jobs(run)]}
+
+
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = service.get(job_id)
     if job is None:
         raise HTTPException(404, f"unknown inversion job: {job_id}")
     return job.to_dict()
+
+
+@router.get("/jobs/{job_id}/layers")
+def job_layers(job_id: str) -> dict:
+    """Boundary geometry of a finished job for the 3D well tab; see layers.boundary_geometry."""
+    job = service.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"unknown inversion job: {job_id}")
+    if job.status != "done" or job.result is None:
+        raise HTTPException(409, f"inversion job {job_id} is {job.status}, not done")
+    return {"id": job.id, "run": job.run, **layers.boundary_geometry(job.result)}
