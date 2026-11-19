@@ -11,6 +11,7 @@ const ModellingPage = lazy(() => import('./pages/ModellingPage.jsx'))
 const QcPage = lazy(() => import('./pages/QcPage.jsx'))
 const Well3dPage = lazy(() => import('./pages/Well3dPage.jsx'))
 const InversionPage = lazy(() => import('./pages/InversionPage.jsx'))
+const FacetInversionPage = lazy(() => import('./pages/FacetInversionPage.jsx'))
 
 const theme = createTheme({ palette: { primary: { main: '#2a78d6' } } })
 
@@ -19,7 +20,8 @@ const PAGES = [
   { id: 'data', label: 'Data' },
   { id: 'qc', label: 'QC selection' },
   { id: '3d', label: '3D well' },
-  { id: 'inversion', label: 'Inversion' },
+  { id: 'inversion', label: 'Inversion 1D/1.5D' },
+  { id: 'inversion3d', label: 'Inversion 3D facets' },
   { id: 'udar', label: 'Modelling (UDAR)' },
 ]
 
@@ -117,6 +119,14 @@ function App() {
               <Suspense fallback={<LinearProgress />}>
                 <InversionPage runs={runs} run={run} onRunChange={setRun} liveSelection={qcSelections[run]}
                   onOpenQc={() => openPage('qc')} />
+              </Suspense>
+            )}
+          </Box>
+          <Box hidden={page !== 'inversion3d'}>
+            {opened.inversion3d && (
+              <Suspense fallback={<LinearProgress />}>
+                <FacetInversionPage runs={runs} run={run} onRunChange={setRun} liveSelection={qcSelections[run]}
+                  onOpenQc={() => openPage('qc')} onOpen1d5={() => openPage('inversion')} />
               </Suspense>
             )}
           </Box>

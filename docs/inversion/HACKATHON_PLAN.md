@@ -30,7 +30,7 @@ Conventions checked against the delivered data:
 
 | Check | Evidence |
 |---|---|
-| Top = image bin 0, bottom = bin 16 | The delivered `ZR..T`/`ZR..B` curves equal image bins 31–1 and 15–16 (Z-20) |
+| Top = image bin 0, bottom = bin 16 | The delivered `ZR..T/R/B/L` curves equal the 90° sectors of bins 28–3, 4–11, 12–19 and 20–27 (conductivity mean): median 0.8–1.1 % on Z-19/Z-20, better than one bin (1.4–1.7 %). Quadrants are now always extracted from the image this way, and the forward model predicts the same sector |
 | Bottom bin reads a resistive bed below | Z-20 at 20350 ft: ZRH16P top 7.4, bottom 52.7 Ω·m as the well approaches the resistive layer below |
 | ZG sign | ZG top phase/attenuation correlate +0.52 to +0.66 with log(ZR bottom/top) on Z-19 and Z-20. ZGL112A correlates < 0.16, so its weight is 0.25 |
 
