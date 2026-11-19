@@ -6,6 +6,9 @@ import {
 import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
 import ColorBar from '../components/well3d/ColorBar.jsx'
+import InversionLayers from '../components/well3d/InversionLayers.jsx'
+import { LayersControl, LayersReadout } from '../components/well3d/LayersControl.jsx'
+import { useInversionLayers } from '../components/well3d/inversionLayers.js'
 import { buildPath, locate, nearestIndex } from '../components/well3d/path.js'
 import { STATUS, api, getCurves, runPath } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
@@ -93,6 +96,7 @@ export default function Well3dPage({ runs, active }) {
     () => api(`${runPath(run)}/well3d?curve=${encodeURIComponent(shown)}&max_points=${MAX_POINTS}`),
     run && shown ? `${run}|${shown}` : null)
   const data = well.data
+  const inv = useInversionLayers(run, active)
 
   const [exaggeration, setExaggeration] = useState(1)
   const [tubeScale, setTubeScale] = useState(1)
@@ -221,6 +225,7 @@ export default function Well3dPage({ runs, active }) {
             </ButtonGroup>
             <PickSelect label="Vertical exag." value={exaggeration} onChange={setExaggeration} options={EXAGGERATIONS} suffix="×" width={120} />
             <PickSelect label="Tube scale" value={tubeScale} onChange={setTubeScale} options={TUBE_SCALES} suffix="×" width={110} />
+            <LayersControl inv={inv} curveSpec={data.color} />
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 1 }}>
             <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>MD (ft)</Typography>
@@ -229,7 +234,9 @@ export default function Well3dPage({ runs, active }) {
           </Box>
           <Box sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             <Suspense fallback={<LinearProgress />}>
-              <WellScene ref={scene} data={data} path={path} radius={radius} radii={radii} active={active} travel={travelProps} />
+              <WellScene ref={scene} data={data} path={path} radius={radius} radii={radii} active={active} travel={travelProps}>
+                {inv.layers && <InversionLayers layers={inv.layers} data={data} path={path} exaggeration={exaggeration} radius={radius} md={md} />}
+              </WellScene>
             </Suspense>
             <Box sx={{ position: 'absolute', top: 8, left: 8, bgcolor: 'rgba(255,255,255,0.85)', p: 1, borderRadius: 1,
               borderLeft: 4, borderColor: status?.color ?? 'grey.500', pointerEvents: 'none' }}>
@@ -247,6 +254,7 @@ export default function Well3dPage({ runs, active }) {
                   : `No DOI (non-ADR curve) · fixed tube radius ${fmtNum(radius)} m`}
                 {tubeScale > 1 && ` · ${tubeScale}× scale`}
               </Typography>
+              {inv.layers && <LayersReadout layers={inv.layers} data={data} path={path} md={md} />}
               <Typography variant="caption" color="text.secondary">
                 ↑/↓ travel · +/− zoom · space play · drag to orbit (Free)
               </Typography>

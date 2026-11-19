@@ -236,6 +236,14 @@ endpoint. Nothing else depends on them.
 
 ## Implementation notes (deviations from the plan)
 
+- **Inversion layers (ideas A + B):** done on `feature/well3d-inversion-layers`.
+  - Backend: `GET /inversion/jobs?run=` lists the run's finished jobs (newest first, no result payload). `GET /inversion/jobs/{id}/layers` returns the boundary geometry (`backend/inversion/layers.py`): the plane normal in NED (`LayerModel.normal`), and per boundary and station the TVD, `above`, and the perpendicular distance `|TVD_well − TVD_boundary| · cos(dip)`, plus the nearest boundary per station. Tests: `backend/tests/test_inversion_layers.py`.
+  - Frontend (`components/well3d/inversionLayers.js`, `InversionLayers.jsx`, `LayersControl.jsx`): the 3D tab refreshes the job list when it becomes active and shows the newest job (an **Inversion** picker switches; an **Inversion layers** switch hides them). With no job: *Inversion layers: run an inversion on the Inversion tab*. The Inversion page is unchanged.
+  - Each boundary is a semi-transparent ribbon over the inverted interval: at each station it sits vertically above/below the well at the boundary TVD, and extends ±2 × the tube radius (max DOI × tube scale) sideways, horizontal and perpendicular to the well, tilted into the dipping plane. Vertical exaggeration applies. Colour = Rh of the layer below, on the tube's Jet log scale when the curve is a resistivity (else Jet over the layer Rh range); swatches next to the picker.
+  - B: a station is *seen* when the nearest boundary is closer than the shown curve's DOI there (per-bin DOI: high-side bin for a boundary above, low-side bin for one below). Seen sections get a magenta glow around the tube; a line joins the travel point to the nearest boundary; the panel reads *Nearest boundary ≈ X m above/below (boundary k) · seen/not seen (DOI Y m)*.
+  - Assumptions: the boundary is placed vertically from the well at each station (the inversion's own convention); the DOI is an estimate (see criterion 12), so *seen* is indicative. Jobs live in memory, so a backend restart empties the list. Screenshot: `docs/screenshots/well3d-layers.png` (VC-2, 17202–17322 ft, 3 layers, 5× exaggeration).
+  - Also fixed: `WellScene` returned `false` from a `useEffect` in Follow mode when the path changed (React console error).
+
 - **Colour helper:** the backend computes the colour spec (scale, reverse, log10, zmin, zmax) and the frontend only maps values with `components/well3d/colormap.js`. `CurveTrackPlot.jsx` is unchanged, so the QC tab output cannot drift; `npm run check:colormap` guards the copied Plotly stops.
 - **Colouring:** scalar and image curves both use a `DataTexture` (one row per sample, nearest filtering), so colours change per sample like the QC heatmap instead of blending between samples.
 - **Nulls:** dark grey `rgb(80,80,80)`, because the RdBu midpoint is already a light grey (190) and a null must not read as a zero geosignal.
