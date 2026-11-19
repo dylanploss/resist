@@ -15,7 +15,7 @@ import InversionTracks from '../components/inversion/InversionTracks.jsx'
 const BASE_SETTINGS = { step: 4, layers: 3, calibration: true, quick: false }
 const ACTIVE = ['queued', 'running']
 
-function Card({ title, extra, children }) {
+export function Card({ title, extra, children }) {
   return (
     <Paper variant="outlined" sx={{ p: 1.5 }}>
       {title && (
@@ -29,7 +29,7 @@ function Card({ title, extra, children }) {
   )
 }
 
-function Stat({ label, value }) {
+export function Stat({ label, value }) {
   return (
     <Typography variant="body2" component="span" color="text.secondary">
       {label} <Box component="b" sx={{ color: 'text.primary' }}>{value}</Box>
@@ -38,7 +38,7 @@ function Stat({ label, value }) {
 }
 
 // Curves come from the QC page: the live selection if the user visited it, else the saved selection, else auto-pick.
-function useQcCurves(run, liveSelection) {
+export function useQcCurves(run, liveSelection) {
   const live = liveSelection && liveSelection.length ? liveSelection : null
   const [fetched, setFetched] = useState({ run: null, curves: [], from: null, error: null })
   useEffect(() => {
