@@ -18,6 +18,7 @@ class InversionRequest(BaseModel):
     layers: int = Field(3, ge=1, le=4)
     calibration: bool = True
     quick: bool = False
+    force: bool = False   # recompute even when the store already has this request
 
     @model_validator(mode="after")
     def check_interval(self):
@@ -47,7 +48,7 @@ def plan(request: InversionRequest) -> dict:
 def submit(request: InversionRequest) -> dict:
     well_run = runs.get_run(request.run)
     try:
-        job = service.submit(request.run, well_run, request.model_dump())
+        job = service.submit(request.run, well_run, request.model_dump(exclude={"force"}), force=request.force)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return job.to_dict()

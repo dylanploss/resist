@@ -1,6 +1,8 @@
+import logging
 import os
 from pathlib import Path
 import sys
+import threading
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -19,6 +21,7 @@ from backend.services import runs
 
 from backend.qc.api import router as qc_router
 from backend.inversion.api import router as inversion_router
+from backend.inversion import store as inversion_store
 
 app = FastAPI(title="Resist backend")
 app.add_middleware(
@@ -29,6 +32,12 @@ app.add_middleware(
 )
 app.include_router(qc_router)
 app.include_router(inversion_router)
+
+
+@app.on_event("startup")
+def _warm_store() -> None:
+    # Resolve the Cosmos key (env/.env or az login) and connect off the event loop; requests wait for it.
+    threading.Thread(target=inversion_store.get_store, name="store-init", daemon=True).start()
 
 
 def error(status: int, message: str) -> JSONResponse:
@@ -74,8 +83,13 @@ def _nullable(values: np.ndarray) -> list:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict:
+    """Always 200; ``store`` is cosmos|memory and ``cosmos`` ok|unavailable (with ``reason``)."""
+    try:
+        store_status = inversion_store.status()
+    except Exception as exc:  # health must never fail
+        store_status = {"store": "memory", "cosmos": "unavailable", "reason": type(exc).__name__}
+    return {"status": "ok", **store_status}
 
 
 @app.get("/runs")
@@ -127,4 +141,5 @@ def qc_select(request: QcSelectRequest) -> dict:
 if __name__ == "__main__":
     import uvicorn
 
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     uvicorn.run(app, port=int(os.environ.get("RESIST_BACKEND_PORT", "5000")))
