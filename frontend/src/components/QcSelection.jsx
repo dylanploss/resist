@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Box, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Typography,
 } from '@mui/material'
-import { api, runPath } from '../api.js'
+import { api, compareGroup, runPath } from '../api.js'
 import CurveTrackPlot from './CurveTrackPlot.jsx'
 import DoiNoiseScatter from './DoiNoiseScatter.jsx'
 import QcTable from './QcTable.jsx'
@@ -36,6 +36,7 @@ function QcSelection({ run }) {
   const [qc, setQc] = useState({ key: null, body: null, error: null })
   const [checked, setChecked] = useState([])
   const [plotted, setPlotted] = useState([])
+  const [focus, setFocus] = useState(null)
   const [save, setSave] = useState({ saving: false, saved: null, error: null })
   const qcKey = `${run}|${nSelect}`
 
@@ -48,6 +49,7 @@ function QcSelection({ run }) {
         setQc({ key: qcKey, body, error: null })
         setChecked(body.selected)
         setPlotted(body.selected.slice(0, INITIAL_TRACKS))
+        setFocus(null)
         setSave({ saving: false, saved: null, error: null })
       })
       .catch((error) => !cancelled && setQc({ key: qcKey, body: null, error: error.message }))
@@ -59,6 +61,20 @@ function QcSelection({ run }) {
     (name) => (checked.includes(name) ? 'auto' : rows.find((r) => r.name === name)?.status),
     [checked, rows])
   const togglePlotted = (name) => setPlotted((list) => toggle(list, name).slice(-MAX_TRACKS))
+  const byName = useMemo(() => Object.fromEntries(rows.map((r) => [r.name, r])), [rows])
+  const orderedPlotted = useMemo(
+    () => plotted.map((n) => byName[n]).filter(Boolean).sort(compareGroup).map((r) => r.name),
+    [plotted, byName])
+  const showCurve = useCallback((name) => {
+    setPlotted((list) => (list.includes(name) ? list : [...list, name].slice(-MAX_TRACKS)))
+    setFocus({ name, nonce: Date.now() })
+  }, [])
+  const showCurves = useCallback((names) => {
+    const picked = names.map((n) => byName[n]).filter(Boolean).sort(compareGroup)
+      .slice(0, MAX_TRACKS).map((r) => r.name)
+    setPlotted(picked)
+    setFocus({ name: picked[0], nonce: Date.now() })
+  }, [byName])
   const loading = Boolean(run) && qc.key !== qcKey
 
   const saveSelection = () => {
@@ -93,18 +109,20 @@ function QcSelection({ run }) {
       {qc.body && !loading && (
         <>
           <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'minmax(0, 3fr) minmax(0, 2fr)' }, mb: 3 }}>
-            <QcTable rows={rows} checked={checked} plotted={plotted}
+            <QcTable rows={rows} checked={checked} plotted={plotted} focus={focus?.name}
               onToggleChecked={(name) => setChecked((list) => toggle(list, name))}
-              onTogglePlotted={togglePlotted} />
+              onTogglePlotted={togglePlotted} onShowCurve={showCurve} />
             <Box>
-              <DoiNoiseScatter rows={rows} checked={checked} onTogglePlotted={togglePlotted} />
+              <DoiNoiseScatter rows={rows} checked={checked} focus={focus?.name}
+                onShowCurve={showCurve} onShowCurves={showCurves} />
               <SelectionSummary rows={rows} checked={checked} saving={save.saving} saved={save.saved}
                 onRemove={(name) => setChecked((list) => list.filter((n) => n !== name))}
-                onReset={() => setChecked(qc.body.selected)} onSave={saveSelection} />
+                onReset={() => setChecked(qc.body.selected)} onSave={saveSelection}
+                onPlot={() => showCurves(checked)} />
             </Box>
           </Box>
           <Typography variant="subtitle2" gutterBottom>Curves vs measured depth</Typography>
-          <CurveTrackPlot key={run} run={run} names={plotted} statusOf={statusOf} />
+          <CurveTrackPlot key={run} run={run} names={orderedPlotted} statusOf={statusOf} focus={focus} />
         </>
       )}
     </Paper>
