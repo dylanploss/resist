@@ -1,7 +1,7 @@
 import { Alert, Box, Button, Chip, Stack, Typography } from '@mui/material'
 import { FREQ_LABEL, STATUS } from '../api.js'
 
-function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, saving, saved }) {
+function SelectionSummary({ rows, checked, onRemove, onSave, saving, saved }) {
   const byName = Object.fromEntries(rows.map((r) => [r.name, r]))
   const chosen = checked.map((n) => byName[n]).filter(Boolean)
   const count = (test) => chosen.filter(test).length
@@ -44,11 +44,7 @@ function SelectionSummary({ rows, checked, onRemove, onReset, onSave, onPlot, sa
       <Stack spacing={0.5} sx={{ mb: 1.5 }}>
         {warnings.map((w) => <Alert key={w} severity="warning" sx={{ py: 0 }}>{w}</Alert>)}
       </Stack>
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-        <Button variant="outlined" size="small" onClick={onReset}>Reset to auto-picks</Button>
-        <Button variant="outlined" size="small" onClick={onPlot} disabled={!chosen.length}>
-          Plot selection ↓
-        </Button>
+      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
         <Button variant="contained" size="small" onClick={onSave}
           disabled={saving || chosen.length < 1 || chosen.length > 10}>
           {saving ? 'Saving…' : 'Save selection'}
