@@ -11,11 +11,11 @@ from fastapi import APIRouter, HTTPException, Query
 import numpy as np
 from pydantic import BaseModel, Field
 
-from backend.data.loader import load_run
 from backend.qc.selection import DEFAULT_SELECT, SELECT_RANGE, select_curves
+from backend.services import runs
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = Path(os.environ.get("RESIST_DATA_DIR", REPO_ROOT / "data"))
+REPO_ROOT = runs.REPO_ROOT
+DATA_DIR = runs.data_dir()
 SELECTION_DIR = Path(os.environ.get("RESIST_SELECTION_DIR", REPO_ROOT / "backend" / "output" / "selections"))
 FT_PER_M = 1 / 0.3048
 
@@ -27,21 +27,17 @@ class SelectionRequest(BaseModel):
     n_select: int = Field(DEFAULT_SELECT, ge=SELECT_RANGE[0], le=SELECT_RANGE[1])
 
 
-def _run_paths() -> dict[str, Path]:
-    return {p.stem: p for p in sorted(DATA_DIR.glob("*.dlis"))}
-
-
 def _path(run: str) -> Path:
-    path = _run_paths().get(run)
+    path = runs.run_paths().get(run)
     if path is None:
         raise HTTPException(404, f"unknown run: {run}")
     return path
 
 
-# Image channels make one run about 100 MB in memory, so keep only a few.
-@lru_cache(maxsize=2)
 def _load(run: str):
-    return load_run(_path(run))
+    """Shared with the /curves endpoints, so a run is parsed once per process."""
+    _path(run)
+    return runs.get_run(run)
 
 
 @lru_cache(maxsize=32)
@@ -52,12 +48,6 @@ def _qc(run: str, n_select: int) -> dict:
 def _to_list(values: np.ndarray) -> list:
     return [_to_list(v) for v in values] if values.ndim > 1 else \
         [float(v) if math.isfinite(v) else None for v in values]
-
-
-@router.get("/runs")
-def runs() -> dict:
-    return {"runs": [{"run": stem, "label": stem.removesuffix("_RES_GEOSIGNAL")}
-                     for stem in _run_paths()]}
 
 
 @router.get("/runs/{run}/qc")
