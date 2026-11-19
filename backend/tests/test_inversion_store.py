@@ -209,6 +209,38 @@ class ServiceFlowTests(unittest.TestCase):
         self.assertNotEqual(a[0], v2[0])
         self.assertEqual(a[1], v2[1])                       # same request key across versions
 
+    def test_every_result_field_changes_the_fingerprint(self):
+        plan = {"used": [{"label": "ARH16P", "weight": 1.0}]}
+        base = service.fingerprint("r", self.request(), plan)
+        changes = {"md_min_ft": 1004.0, "md_max_ft": 1040.0, "step_ft": 2.0, "layers": 3, "calibration": False,
+                   "quick": False, "slice_ft": 8.0, "window_ft": 30.0, "rh_min_ohmm": 0.5, "rh_max_ohmm": 500.0}
+        for key, value in changes.items():
+            with self.subTest(key=key):
+                fp, request_key = service.fingerprint("r", {**self.request(), key: value}, plan)
+                self.assertNotEqual(fp, base[0])
+                self.assertNotEqual(request_key, base[1])
+        self.assertNotEqual(service.fingerprint("other", self.request(), plan)[0], base[0])
+        self.assertNotEqual(service.fingerprint("r", self.request(curves=("ARH16P",)), plan)[0], base[0])
+
+    def test_fingerprint_fills_defaults_and_ignores_force(self):
+        from backend.inversion.api import InversionRequest
+        plan = {"used": [{"label": "ARH16P", "weight": 1.0}]}
+        full = InversionRequest(run="r", **self.request(), force=True).model_dump()
+        self.assertEqual(service.fingerprint("r", full, plan), service.fingerprint("r", self.request(), plan))
+        explicit = {**self.request(), "slice_ft": service.DEFAULT_SLICE_FT, "window_ft": service.DEFAULT_WINDOW_FT,
+                    "rh_min_ohmm": 0.1, "rh_max_ohmm": 1000.0}
+        self.assertEqual(service.fingerprint("r", explicit, plan), service.fingerprint("r", self.request(), plan))
+
+    def test_new_request_fields_cache_separately(self):
+        first = self.run_job(self.request())
+        windowed = self.run_job({**self.request(), "window_ft": 40.0})
+        bounded = self.run_job({**self.request(), "rh_min_ohmm": 1.0, "rh_max_ohmm": 200.0})
+        self.assertEqual(len({first.id, windowed.id, bounded.id}), 3)
+        self.assertEqual([j.source for j in (first, windowed, bounded)], ["computed"] * 3)
+        self.assertEqual(len(self.calls), 3)
+        again = service.submit("runF", self.run, {**self.request(), "window_ft": 40.0})
+        self.assertEqual((again.source, again.id), ("graph", windowed.id))
+
     def test_same_request_twice_computes_once(self):
         first = self.run_job(self.request())
         self.assertEqual(first.source, "computed")
