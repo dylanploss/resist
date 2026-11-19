@@ -12,7 +12,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from backend.qc.selection import DEFAULT_SELECT, SELECT_RANGE, select_curves
-from backend.services import runs, well3d
+from backend.services import field, runs, well3d
 
 REPO_ROOT = runs.REPO_ROOT
 DATA_DIR = runs.data_dir()
@@ -90,6 +90,18 @@ def well_3d(run: str, curve: str, start_ft: float | None = None, end_ft: float |
         raise HTTPException(404, str(exc)) from exc
     except well3d.NoTrajectoryError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/field")
+def field_view(max_points: int = Query(300, ge=50, le=2000)) -> dict:
+    """Every run's thinned path at absolute UTM positions; see field.field."""
+    loaded = {}
+    for run in runs.run_paths():
+        try:
+            loaded[run] = runs.get_run(run)
+        except Exception as exc:  # one unreadable file must not hide the rest of the field
+            loaded[run] = exc
+    return field.field(loaded, max_points)
 
 
 @router.get("/runs/{run}/selection")

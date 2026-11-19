@@ -6,6 +6,15 @@ import {
 import ApiStatus from '../components/ApiStatus.jsx'
 import RunPicker from '../components/RunPicker.jsx'
 import ColorBar from '../components/well3d/ColorBar.jsx'
+import { CompareColorBar, CompareDoi, ComparePicker } from '../components/well3d/Compare.jsx'
+import DemoCaption from '../components/well3d/DemoCaption.jsx'
+import FieldView from '../components/well3d/FieldView.jsx'
+import InversionLayers from '../components/well3d/InversionLayers.jsx'
+import { LayersControl, LayersReadout } from '../components/well3d/LayersControl.jsx'
+import { useInversionLayers } from '../components/well3d/inversionLayers.js'
+import { useCompare } from '../components/well3d/useCompare.js'
+import { useDemo } from '../components/well3d/useDemo.js'
+import { useSnapshot } from '../components/well3d/useSnapshot.js'
 import { buildPath, locate, nearestIndex } from '../components/well3d/path.js'
 import { STATUS, api, getCurves, runPath } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
@@ -78,6 +87,7 @@ function CurvePicker({ value, onChange, selected, names, statusOf }) {
 // Run and curve come from the shared selection, so "View in 3D" on the QC tab opens that curve here.
 export default function Well3dPage({ runs, active }) {
   const { run, setRun, curve, setCurve } = useSelection()
+  const [scope, setScope] = useState('well')
   const [webgl] = useState(hasWebGL)
   const curves = useApi(() => getCurves(run), run || null)
   const qc = useApi(() => api(`${runPath(run)}/qc`), run ? `qc|${run}` : null)
@@ -93,6 +103,7 @@ export default function Well3dPage({ runs, active }) {
     () => api(`${runPath(run)}/well3d?curve=${encodeURIComponent(shown)}&max_points=${MAX_POINTS}`),
     run && shown ? `${run}|${shown}` : null)
   const data = well.data
+  const inv = useInversionLayers(run, active)
 
   const [exaggeration, setExaggeration] = useState(1)
   const [tubeScale, setTubeScale] = useState(1)
@@ -111,6 +122,9 @@ export default function Well3dPage({ runs, active }) {
     return { min, max }
   }, [data])
   const radius = doiRange ? doiRange.max * tubeScale : FALLBACK_RADIUS_M * tubeScale
+  const compare = useCompare({ run, shown, names, selected, scores: qc.data?.scores, primary: data,
+    maxPoints: MAX_POINTS, tubeScale, fallback: FALLBACK_RADIUS_M })
+  const view = compare.layout?.shell ? compare.layout : null
   const [step, setStep] = useState(50)
   const [speed, setSpeed] = useState(100)
   const [mode, setMode] = useState('free')
@@ -138,7 +152,7 @@ export default function Well3dPage({ runs, active }) {
   }, [])
 
   useEffect(() => {
-    if (!active || !path) return undefined
+    if (!active || !path || scope !== 'well') return undefined
     const onKey = (e) => {
       if (e.target.closest?.('input, textarea, select, [role="slider"], [role="combobox"], [role="listbox"]')) return
       const actions = {
@@ -152,13 +166,18 @@ export default function Well3dPage({ runs, active }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, path, move, togglePlay, zoom])
+  }, [active, path, scope, move, togglePlay, zoom])
 
+  const wellActive = active && scope === 'well'
+  const demo = useDemo({ data, path, active: wellActive, scene, md, playing: isPlaying, mdStart, mdEnd, setTravel, setMode })
+  const viewport = useRef(null)
+  const savePng = useSnapshot({ viewport, active: wellActive, run, curve: shown, md })
   const travelProps = useMemo(() => ({
     md, mdEnd, playing: isPlaying, speed, mode,
     onMd: setMd,
     onEnd: () => setTravel((t) => ({ ...t, playing: false })),
-  }), [md, mdEnd, isPlaying, speed, mode, setMd])
+    ...demo.overrides,
+  }), [md, mdEnd, isPlaying, speed, mode, setMd, demo.overrides])
 
   const readout = useMemo(() => {
     if (!path) return null
@@ -172,15 +191,30 @@ export default function Well3dPage({ runs, active }) {
 
   const status = STATUS[statusOf(shown)]
 
+  const viewToggle = (
+    <ToggleButtonGroup size="small" exclusive value={scope} onChange={(_, v) => v && setScope(v)} aria-label="View">
+      <ToggleButton value="well">Single well</ToggleButton>
+      <ToggleButton value="field">Field</ToggleButton>
+    </ToggleButtonGroup>
+  )
+  if (scope === 'field') {
+    return <FieldView active={active} toggle={viewToggle} onPick={(r) => { setRun(r); setScope('well') }} />
+  }
+
   return (
     <Stack spacing={2}>
       <Paper sx={{ p: 2 }}>
         <ApiStatus state={runs} label="Runs" onRetry={runs.reload} />
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+          {viewToggle}
           {runs.data && <RunPicker runs={runs.data.runs} value={run} onChange={setRun} />}
           {run && <CurvePicker value={shown} onChange={setCurve} selected={selected} names={names} statusOf={statusOf} />}
           {shown && status && (
             <Chip size="small" variant="outlined" label={status.label} sx={{ borderColor: status.color, color: status.color }} />
+          )}
+          {run && shown && (
+            <ComparePicker value={compare.value} onChange={compare.setValue} shown={shown} suggestion={compare.suggestion}
+              selected={selected} names={names} statusOf={statusOf} />
           )}
           {data && (
             <Typography variant="caption" color="text.secondary">
@@ -196,6 +230,9 @@ export default function Well3dPage({ runs, active }) {
       {run && !shown && qc.loading && <LinearProgress />}
       {well.loading && <LinearProgress />}
       {well.error && <Alert severity="error">{well.error.message}</Alert>}
+      {compare.loading && <LinearProgress color="secondary" />}
+      {compare.error && <Alert severity="error">Compare with: {compare.error.message}</Alert>}
+      {compare.mismatch && <Alert severity="warning">The compared curve has different samples, so it is not drawn.</Alert>}
       {data && !path && <Alert severity="warning">This curve has fewer than two samples with a well position.</Alert>}
 
       {webgl && path && (
@@ -219,17 +256,32 @@ export default function Well3dPage({ runs, active }) {
               <Tooltip title="Zoom out (−)"><Button onClick={() => zoom(-1)}>Zoom out</Button></Tooltip>
               <Tooltip title="Fit the whole well (free camera)"><Button onClick={reset}>Reset view</Button></Tooltip>
             </ButtonGroup>
+            <ButtonGroup size="small" variant="outlined" aria-label="Demo and export">
+              <Tooltip title={demo.running ? 'Stop the demo (Esc)' : 'Scripted fly-through with captions'}>
+                <Button onClick={demo.running ? demo.stop : demo.start} variant={demo.running ? 'contained' : 'outlined'}>
+                  {demo.running ? '■ Stop demo' : '★ Demo'}
+                </Button>
+              </Tooltip>
+              <Tooltip title="Download the current 3D view as PNG"><Button onClick={savePng}>Save PNG</Button></Tooltip>
+            </ButtonGroup>
             <PickSelect label="Vertical exag." value={exaggeration} onChange={setExaggeration} options={EXAGGERATIONS} suffix="×" width={120} />
             <PickSelect label="Tube scale" value={tubeScale} onChange={setTubeScale} options={TUBE_SCALES} suffix="×" width={110} />
+            <LayersControl inv={inv} curveSpec={data.color} />
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 1 }}>
             <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>MD (ft)</Typography>
             <Slider size="small" aria-label="Measured depth" value={md} min={mdStart} max={mdEnd} step={0.5}
               onChange={(_, v) => setMd(v)} valueLabelDisplay="auto" valueLabelFormat={(v) => `${v.toFixed(1)} ft`} />
           </Box>
-          <Box sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+          <Box ref={viewport} sx={{ position: 'relative', height: { xs: 480, lg: 640 }, mt: 1, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
             <Suspense fallback={<LinearProgress />}>
-              <WellScene ref={scene} data={data} path={path} radius={radius} radii={radii} active={active} travel={travelProps} />
+              <WellScene ref={scene} data={view ? view.inner : data} path={path} radius={view ? view.radius : radius}
+                radii={view ? view.innerRadii : radii} shell={view?.shell} active={active} travel={travelProps}>
+                {inv.layers && (
+                  <InversionLayers layers={inv.layers} data={data} path={path} exaggeration={exaggeration}
+                    radius={view ? view.radius : radius} md={md} />
+                )}
+              </WellScene>
             </Suspense>
             <Box sx={{ position: 'absolute', top: 8, left: 8, bgcolor: 'rgba(255,255,255,0.85)', p: 1, borderRadius: 1,
               borderLeft: 4, borderColor: status?.color ?? 'grey.500', pointerEvents: 'none' }}>
@@ -247,13 +299,17 @@ export default function Well3dPage({ runs, active }) {
                   : `No DOI (non-ADR curve) · fixed tube radius ${fmtNum(radius)} m`}
                 {tubeScale > 1 && ` · ${tubeScale}× scale`}
               </Typography>
+              {view && <CompareDoi layout={view} i={readout.i} />}
+              {inv.layers && <LayersReadout layers={inv.layers} data={data} path={path} md={md} />}
               <Typography variant="caption" color="text.secondary">
                 ↑/↓ travel · +/− zoom · space play · drag to orbit (Free)
               </Typography>
             </Box>
-            <Box sx={{ position: 'absolute', top: 8, right: 8, pointerEvents: 'none' }}>
+            <Box sx={{ position: 'absolute', top: 8, right: 8, pointerEvents: 'none', display: 'flex', gap: 1 }}>
+              {view && <CompareColorBar layout={view} data={view.inner === data ? view.outer : view.inner} />}
               <ColorBar spec={data.color} unit={data.unit} />
             </Box>
+            <DemoCaption caption={demo.caption} step={demo.step} total={demo.total} />
           </Box>
           {data.image && (
             <Typography variant="caption" color="text.secondary">
