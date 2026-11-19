@@ -58,23 +58,35 @@ Rules:
 - `scores` covers every curve in the inventory. `noise` is jaggedness: below 0.5 smooth, 1 white noise.
 - `warnings` lists noisy curves kept as deep fallbacks and depth tiers with no usable curve.
 
-## Endpoints (Ove)
+## Endpoints
 
-| Method | Path | Response |
-|--------|------|----------|
-| GET | `/health` | `{"status": "ok"}` |
-| GET | `/curves` | `{"curves": [<curve metadata rows>]}` |
-| POST | `/qc/select` | QC selection JSON above |
+Implemented in `backend/app.py` (data and QC) and `backend/qc/api.py` (QC visualization router, included by `app.py`). A run id is the DLIS file name without `.dlis`, for example `2_4-Z-6_16954-20950ft_RES_GEOSIGNAL`. Runs are read from `DATA_DIR` (default `<repo>/data`). A run is parsed on first use and cached for the life of the process; both modules share that cache.
 
-Errors use `{"error": "<message>"}` with HTTP 4xx or 5xx.
+| Method | Path | Request | Response |
+|--------|------|---------|----------|
+| GET | `/health` | none | `{"status": "ok"}` |
+| GET | `/runs` | none | `{"runs": [{"run", "label", "file", "well", "depth_min_m", "depth_max_m"}]}` |
+| GET | `/curves` | query `run` (required) | `{"run", "well", "curves": [<curve metadata rows>]}` |
+| GET | `/curves/{run}/data` | query `curves=A,B` (required) | `{"run", "well", "depth_m": [..], "curves": {"A": {"unit", "bins", "values": [..]}}}` |
+| POST | `/qc/select` | `{"run": "<id>", "n_select": 8}` | QC selection JSON above |
+| GET | `/runs/{run}/qc` | query `n_select` (default 8) | QC selection JSON above for that run |
+| GET | `/runs/{run}/curves/{name}` | query `start_ft`, `end_ft`, `max_points` (default 1500, 50 to 20000) | `{"run", "curve", "unit", "family", "image", "stride", "md_ft", "values"}` |
+| POST | `/runs/{run}/selection` | `{"curves": [..], "n_select": 8}` | Saved selection record |
 
-## QC visualization endpoints (Dylan, `backend/qc/api.py`)
+Details:
+- `/runs` reads only DLIS headers. `label` is the run id without `_RES_GEOSIGNAL`. `well` and the depth range are null if the header is unreadable, and the entry then has an `error` field.
+- `/curves` rows contain the four metadata columns above plus the loader columns `well`, `run`, `depth_ref`, `sample_count`, `bins`, `depth_min_m`, `depth_max_m`, `valid_fraction`, `nonpositive_count`, and the mnemonic fields from `measurement_metadata`: `family` (`AR`, `ZR`, `ZG` or `conventional`), `frequency_hz`, `spacing_in`, `measurement`, `suffix`, `geometry_status`. Mnemonic fields are null for conventional curves.
+- `/curves/{run}/data` returns one value per depth for scalar curves (`bins` 1) and a list of 32 bin values per depth for image curves (`bins` 32). Null-sentinel and non-finite samples are `null`.
+- `/qc/select` and `/runs/{run}/qc`: `n_select` defaults to 8 and must be within 5 to 10.
+- `/runs/{run}/curves/{name}` returns every `stride`th sample (thinned, not averaged) between `start_ft` and `end_ft`; images are returned as 32 bins x depth.
+- `/runs/{run}/selection` saves `backend/output/selections/{run}.json` (override with `RESIST_SELECTION_DIR`) with `curves`, `auto_selected`, `added`, `removed` and `overridden_rejections`.
 
-`{run}` is the DLIS file stem, for example `2_4-Z-6_16954-20950ft_RES_GEOSIGNAL`. Errors use FastAPI's `{"detail": "<message>"}`.
+Errors use `{"error": "<message>"}`:
 
-| Method | Path | Response |
-|--------|------|----------|
-| GET | `/runs` | `{"runs": [{"run", "label"}]}` |
-| GET | `/runs/{run}/qc?n_select=8` | QC selection JSON above for that run |
-| GET | `/runs/{run}/curves/{name}?start_ft=&end_ft=&max_points=1500` | `{curve, unit, family, image, stride, md_ft, values}`; every `stride`th sample, images as 32 bins × depth |
-| POST | `/runs/{run}/selection` | Body `{curves, n_select}`; saves `backend/output/selections/{run}.json` with `added`, `removed`, `overridden_rejections` |
+| Status | When |
+|--------|------|
+| 400 | Missing `run` or `curves` parameter, unknown curve name in `/curves/{run}/data`, `n_select` outside 5 to 10 in `/qc/select` |
+| 404 | Unknown run id, unknown curve in `/runs/{run}/curves/{name}` |
+| 422 | Invalid request body or query value; selection with unknown or duplicate curves |
+| 500 | A DLIS file fails to load or QC fails unexpectedly |
+| 503 | `DATA_DIR` missing or holding no `.dlis` files |

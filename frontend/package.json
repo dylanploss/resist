@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:udar": "node scripts/check-udar-sync.mjs",
+    "sync:udar": "node scripts/check-udar-sync.mjs --write"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

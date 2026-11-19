@@ -30,9 +30,8 @@ function buildRows(qc) {
 
 const toggle = (list, name) => (list.includes(name) ? list.filter((n) => n !== name) : [...list, name])
 
-function QcSelection() {
-  const [runs, setRuns] = useState([])
-  const [run, setRun] = useState('')
+// The run comes from the shared run picker on the QC page.
+function QcSelection({ run }) {
   const [nSelect, setNSelect] = useState(8)
   const [qc, setQc] = useState({ key: null, body: null, error: null })
   const [checked, setChecked] = useState([])
@@ -40,15 +39,6 @@ function QcSelection() {
   const [focus, setFocus] = useState(null)
   const [save, setSave] = useState({ saving: false, saved: null, error: null })
   const qcKey = `${run}|${nSelect}`
-
-  useEffect(() => {
-    api('/runs')
-      .then((body) => {
-        setRuns(body.runs)
-        setRun(body.runs[0]?.run ?? '')
-      })
-      .catch((error) => setQc({ key: null, body: null, error: error.message }))
-  }, [])
 
   useEffect(() => {
     if (!run) return undefined
@@ -102,12 +92,6 @@ function QcSelection() {
     <Paper sx={{ p: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <Typography variant="h6" sx={{ mr: 1 }}>QC selection</Typography>
-        <FormControl size="small" sx={{ minWidth: 340 }}>
-          <InputLabel>Run</InputLabel>
-          <Select label="Run" value={run} onChange={(e) => setRun(e.target.value)}>
-            {runs.map((r) => <MenuItem key={r.run} value={r.run}>{r.label}</MenuItem>)}
-          </Select>
-        </FormControl>
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <InputLabel>Auto-pick</InputLabel>
           <Select label="Auto-pick" value={nSelect} onChange={(e) => setNSelect(e.target.value)}>
@@ -117,6 +101,7 @@ function QcSelection() {
         {loading && <><CircularProgress size={20} /><Typography variant="caption">Running QC…</Typography></>}
       </Box>
 
+      {!run && <Typography color="text.secondary">Pick a run first.</Typography>}
       {qc.error && <Alert severity="error" sx={{ mb: 2 }}>{qc.error}</Alert>}
       {save.error && <Alert severity="error" sx={{ mb: 2 }}>Save failed: {save.error}</Alert>}
       {qc.body?.warnings.map((w) => <Alert key={w} severity="warning" sx={{ mb: 1 }}>{w}</Alert>)}
