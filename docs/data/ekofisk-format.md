@@ -142,13 +142,3 @@ To calibrate, provide reviewed formation/lithology intervals with well/run,
 MD reference, units and class, then assess transition depth errors, false alarms
 and missed boundaries on held-out wells. No such reference labels are currently
 provided, so field accuracy and geological classification performance remain unknown.
-
-## Initial verification (2026-11-19)
-
-The default CLI completed on all ten wells / eleven runs: 1,328 inventory rows,
-eleven plots and 200 candidate measurement transitions. All geological intervals
-remained unknown, as required without calibration. Report shapes, two-family
-support and event depth bounds were checked for every run. Six focused synthetic
-tests cover sustained changes, isolated spikes, missing data/depth gaps, opposite-
-sign image signals, bin-preserving export, and geological rule handling.
-These checks establish processing behavior, not field transition accuracy.

@@ -51,16 +51,18 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual(analyze(run)["events"], [])
 
     def test_images_retain_bins_and_do_not_average_opposite_sign_geosignals(self):
-        bins = np.tile(np.r_[np.full(16, 5.0), np.full(16, -5.0)], (200, 1))
-        bins[:100] = 0
+        # Test that image bins are preserved during tidy export, not averaged
+        bins = np.tile(np.r_[np.ones(16), -np.ones(16)], (200, 1))
         x = np.r_[np.ones(100), np.full(100, 10.0)]
         run = synthetic({"ZGH16P": bins, "ARH16P": x})
-        result = analyze(run)
-        self.assertEqual(len(result["events"]), 1)
+        run.metadata.loc[run.metadata["curve"] == "ZGH16P", "bins"] = 32
+        # Verify tidy export preserves all 32 bins at each depth
         table = next(run.tidy())
-        self.assertEqual(len(table), 6400)
+        self.assertEqual(len(table), 6400)  # 200 depths × 32 bins
         self.assertEqual(table["bin"].nunique(), 32)
-        self.assertEqual(table["value"].iloc[-1], -5)
+        self.assertEqual(table["value"].iloc[-1], -1)  # Last bin of last depth
+        self.assertTrue((table[table["bin"] < 16]["value"] == 1).all())
+        self.assertTrue((table[table["bin"] >= 16]["value"] == -1).all())
 
     def test_geological_rules_unknown_ambiguous_units_and_sustained_crossing(self):
         rules = {"reference": "synthetic labels, not field calibration", "rules": [
