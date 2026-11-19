@@ -37,21 +37,24 @@ class IntervalData:
     well: str
     md_ft: np.ndarray
     traj: Trajectory
-    obs: np.ndarray            # (n, n_curves) log10 ohm-m
+    obs: np.ndarray            # (n, n_curves) inversion units: log10 ohm-m, or deg/dB for geosignals
     labels: list
     gr: np.ndarray
     ref_ned: np.ndarray        # absolute NED of the reference point (m)
     tvd_ft: np.ndarray
     valid: np.ndarray | None = None   # (n, n_curves) True where a measured value exists
+    units: list | None = None         # per label: 'log', 'deg' or 'dB' (None = all 'log')
 
     def subset(self, mask):
-        traj = Trajectory(self.traj.md_ft[mask], self.traj.ned[mask], self.traj.axis[mask])
-        return IntervalData(self.well, self.md_ft[mask], traj, self.obs[mask], self.labels,
+        return IntervalData(self.well, self.md_ft[mask], self.traj.subset(mask), self.obs[mask], self.labels,
                             self.gr[mask], self.ref_ned, self.tvd_ft[mask],
-                            None if self.valid is None else self.valid[mask])
+                            None if self.valid is None else self.valid[mask], self.units)
 
     def tvd_rel_ft(self, tvd_ft):
         return (np.asarray(tvd_ft) * FT - self.ref_ned[2]) / FT
+
+    def is_log(self):
+        return np.array([u == "log" for u in (self.units or ["log"] * len(self.labels))])
 
 
 def load_interval(path, md_min, md_max, fwd: ADRForward, step_ft=2.0, corrected=False):
@@ -65,39 +68,75 @@ def load_interval(path, md_min, md_max, fwd: ADRForward, step_ft=2.0, corrected=
 TRAJECTORY_CURVES = ("TVD", "INC", "AZI", "UTMX", "UTMY")
 
 
+def azimuthal_average(image):
+    """Conductivity mean of the bins of a resistivity image (depth x bins); reproduces the delivered AR curve."""
+    img = np.asarray(image, float)
+    if img.ndim == 1:
+        return img
+    with np.errstate(divide="ignore", invalid="ignore"):
+        cond = np.where(img > 0, 1.0 / img, np.nan)
+        return 1.0 / np.nanmean(cond, axis=1)
+
+
+def _source_values(c, src, idx):
+    """A source is a curve name, or (image name, bin index) for one azimuthal bin."""
+    if isinstance(src, tuple):
+        return np.asarray(c[src[0]][idx], float)[:, src[1]]
+    return azimuthal_average(c[src][idx])
+
+
+def _has_source(c, src):
+    return (src[0] if isinstance(src, tuple) else src) in c
+
+
 def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources=None, required=None):
     """Interval data for a loaded WellRun.
 
-    ``sources`` maps each forward-model label (e.g. ``ARH16P``) to the delivered curve to use (``ARH16P`` or
-    ``ARH16PC``); labels without a usable source are kept as NaN-free zeros and must get weight 0.
-    Stations are dropped only where a ``required`` label (default: all sourced labels) or the trajectory is missing.
+    ``sources`` maps each forward-model label to its delivered data: a curve name (``ARH16P``, ``ARH16PC``,
+    ``ZRH16PT``; a 32-bin image such as ``ZRH16P`` is reduced by ``azimuthal_average``) or ``(image, bin)`` for one
+    bin (``("ZGM112P", 0)`` is the top geosignal). Labels without a usable source are kept as NaN-free zeros and must
+    get weight 0. Stations are dropped only where a ``required`` label (default: all sourced labels) or the
+    trajectory is missing.
     """
     c = run.curves
     missing = [k for k in TRAJECTORY_CURVES if k not in c]
     if missing:
         raise ValueError(f"run lacks trajectory curves needed for 1.5D inversion: {', '.join(missing)}")
     labels = fwd.channel_labels()
-    sources = {lab: src for lab, src in (sources or {lab: lab for lab in labels}).items() if src in c}
+    units = fwd.units()
+    is_log = np.array([u == "log" for u in units])
+    sources = {lab: src for lab, src in (sources or {lab: lab for lab in labels}).items() if _has_source(c, src)}
     required = list(sources) if required is None else list(required)
     md = c["DEPT"]
     idx = np.flatnonzero((md >= md_min) & (md <= md_max))
     if len(idx) > 1:
         idx = idx[::max(1, int(round(step_ft / np.median(np.diff(md[idx])))))]
-    obs = np.column_stack([c[sources[lab]][idx] if lab in sources else np.full(len(idx), np.nan) for lab in labels])
+    raw = np.column_stack([_source_values(c, sources[lab], idx) if lab in sources else np.full(len(idx), np.nan)
+                           for lab in labels])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        obs = np.where(is_log, np.log10(np.where(raw > 0, raw, np.nan)), raw)
     traj_cols = [c[k][idx] for k in TRAJECTORY_CURVES]
     req = [labels.index(lab) for lab in required]
-    ok = np.all(np.isfinite(obs[:, req]) & (obs[:, req] > 0), axis=1) & np.all([np.isfinite(t) for t in traj_cols], axis=0)
+    ok = np.all(np.isfinite(obs[:, req]), axis=1) & np.all([np.isfinite(t) for t in traj_cols], axis=0)
     if ok.sum() < 3:
         raise ValueError(f"fewer than 3 stations with complete data between {md_min} and {md_max} ft MD")
     tvd, inc, azi, ue, un = (t[ok] for t in traj_cols)
     ref = np.array([un.mean(), ue.mean(), tvd.mean() * FT])
     traj = Trajectory.from_curves(md[idx][ok], tvd, inc, azi, ue, un, ref=ref)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        log_obs = np.log10(obs[ok])
-    valid = np.isfinite(log_obs)
-    log_obs[~valid] = 0.0
+    obs = obs[ok]
+    valid = np.isfinite(obs)
+    obs[~valid] = 0.0
     gr = c["GR"][idx][ok] if "GR" in c else np.full(int(ok.sum()), np.nan)
-    return IntervalData(run.well, md[idx][ok], traj, log_obs, labels, gr, ref, tvd, valid)
+    return IntervalData(run.well, md[idx][ok], traj, obs, labels, gr, ref, tvd, valid, units)
+
+
+def noise_estimate(values, floor):
+    """Robust noise level of a log from its sample-to-sample differences (MAD), never below ``floor``."""
+    d = np.diff(np.asarray(values, float))
+    d = d[np.isfinite(d)]
+    if d.size < 3:
+        return floor
+    return max(floor, float(1.4826 * np.median(np.abs(d - np.median(d))) / np.sqrt(2)))
 
 
 # ---------------------------------------------------------------------------- parameterisation
@@ -111,6 +150,8 @@ class FitConfig:
     reference: tuple = DEFAULT_REFERENCE
     bias_prior: float = 0.1            # decades, weak Tikhonov prior on b_c
     sigma: float = 0.02                # decades, data standard deviation
+    curve_sigma: dict | None = None    # label -> sigma in inversion units (overrides ``sigma``)
+    azimuthal: bool = False            # forward model with directional ZR top/bottom and ZG channels
     curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
     level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
     max_nfev: int = 25
@@ -176,16 +217,15 @@ _FWD: ADRForward | None = None
 _TRAJ: Trajectory | None = None
 
 
-def _init_worker(receiver_sep_in, traj):
+def _init_worker(receiver_sep_in, traj, azimuthal=False):
     global _FWD, _TRAJ
-    _FWD = ADRForward(receiver_sep_in=receiver_sep_in)
+    _FWD = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=azimuthal)
     _FWD.tables()
     _TRAJ = traj
 
 
 def _predict(model: LayerModel):
-    rp, ra = _FWD.simulate(model, _TRAJ)
-    return np.log10(np.column_stack([rp, ra]))
+    return _FWD.predict(model, _TRAJ)
 
 
 @dataclass
@@ -228,9 +268,11 @@ class Inverter:
         self.lay = Layout(cfg, data.obs.shape[1], az)
         self.ref_idx = np.array([data.labels.index(r) for r in cfg.reference if r in data.labels])
         w = cfg.curve_weights or {}
-        self.w = np.array([float(w.get(lab, 1.0)) for lab in data.labels]) / cfg.sigma
+        sig = cfg.curve_sigma or {}
+        self.w = np.array([float(w.get(lab, 1.0)) / float(sig.get(lab, cfg.sigma)) for lab in data.labels])
         self.pool = ProcessPoolExecutor(max_workers=workers or min(16, self.lay.n_earth + 1),
-                                        initializer=_init_worker, initargs=(receiver_sep_in, data.traj))
+                                        initializer=_init_worker,
+                                        initargs=(receiver_sep_in, data.traj, cfg.azimuthal))
         self._cache = {}
 
     def close(self):
@@ -335,10 +377,13 @@ def default_run_path(data_dir: str | Path, well_token: str):
 
 def default_starts(inv: Inverter, data: IntervalData, k: int, bias=None, weights=None):
     """Three starts that slide the first boundary through the TVD range of the window, with the low and
-    high resistivity levels taken from the phase curves (or all weighted curves when no phase is used)."""
+    high resistivity levels taken from the weighted phase resistivities (else any weighted resistivity)."""
     w = np.ones(len(data.labels)) if weights is None else np.asarray(weights, float)
-    cols = [j for j, lab in enumerate(data.labels) if lab.endswith("P") and w[j] > 0] or \
-        [j for j in range(len(data.labels)) if w[j] > 0]
+    res = data.is_log() & (w > 0)
+    phase = np.array([lab[-1] == "P" or lab[-2:] in ("PT", "PB") for lab in data.labels])
+    cols = np.flatnonzero(res & phase)
+    if not cols.size:
+        cols = np.flatnonzero(res) if res.any() else np.flatnonzero(data.is_log())
     level = 10 ** np.median(data.obs[:, cols], axis=1)
     if k == 1:
         return [inv.x_from([], [np.log10(np.median(level))], 0.1, 0.0, bias)]

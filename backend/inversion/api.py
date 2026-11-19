@@ -39,7 +39,7 @@ def defaults(run: str) -> dict:
 def plan(request: InversionRequest) -> dict:
     well_run = runs.get_run(request.run)
     span = request.md_max_ft - request.md_min_ft
-    return {**service.build_plan(well_run, request.curves, request.calibration),
+    return {**service.public_plan(service.build_plan(well_run, request.curves, request.calibration)),
             "estimated_stations": int(span // request.step_ft) + 1}
 
 

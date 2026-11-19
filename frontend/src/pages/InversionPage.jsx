@@ -58,19 +58,29 @@ function useQcCurves(run, liveSelection) {
     loading: Boolean(run) && !current, error: current ? fetched.error : null }
 }
 
+const KIND_TAG = { avg: '', top: ' top', bottom: ' bottom', geosignal: ' top' }
+const KIND_COLOR = { avg: 'primary', top: 'success', bottom: 'secondary', geosignal: 'warning' }
+
 function PlanView({ plan }) {
   return (
     <Box>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
         {plan.used.map((u) => (
-          <Tooltip key={u.curve} title={`${u.measurement}, weight ${u.weight}` + (u.correction
-            ? `; Z-20 correction ×${u.correction.factor_at_10_ohmm} at 10 Ω·m, ×${u.correction.factor_at_40_ohmm} at 40 Ω·m` : '')}>
-            <Chip size="small" variant="outlined" color={u.measurement === 'phase' ? 'primary' : 'warning'}
-              sx={{ fontFamily: 'monospace' }}
-              label={`${u.curve} · w${u.weight}${u.correction ? ' · corr' : ''}`} />
+          <Tooltip key={u.label} title={`${u.label}: ${u.measurement}, ${u.kind === 'avg' ? 'azimuthal average'
+            : u.kind === 'geosignal' ? 'top-bin geosignal' : `${u.kind} bin`}, from ${u.source}, weight ${u.weight}`
+            + (u.correction
+              ? `; Z-20 correction ×${u.correction.factor_at_10_ohmm} at 10 Ω·m, ×${u.correction.factor_at_40_ohmm} at 40 Ω·m` : '')}>
+            <Chip size="small" variant={u.measurement === 'phase' ? 'outlined' : 'filled'}
+              color={KIND_COLOR[u.kind]} sx={{ fontFamily: 'monospace' }}
+              label={`${u.curve}${KIND_TAG[u.kind]} · w${u.weight}${u.correction ? ' · corr' : ''}`} />
           </Tooltip>
         ))}
       </Box>
+      <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 1 }}>
+        {plan.azimuthal
+          ? 'Directional data in use: top/bottom bins and geosignals place boundaries above or below the well.'
+          : 'Averaged curves only: add ZR images or ZG geosignals in QC to resolve whether beds are above or below.'}
+      </Typography>
       {plan.ignored.length > 0 && (
         <Box sx={{ mb: 1 }}>
           <Typography variant="caption" color="text.secondary">Not used:</Typography>
@@ -86,12 +96,18 @@ function PlanView({ plan }) {
   )
 }
 
+function misfitText(c) {
+  if (c.rms == null) return '–'
+  if (c.unit === 'ohm.m') return `${c.rms_percent.toFixed(1)}%`
+  return `${c.rms.toFixed(2)} ${c.unit}`
+}
+
 function MisfitTable({ curves }) {
   return (
     <Table size="small" sx={{ '& td, & th': { whiteSpace: 'nowrap', px: 1 } }}>
       <TableHead>
         <TableRow>
-          {['Curve', 'Used', 'Weight', 'Correction', 'RMS misfit', 'Mean residual'].map((h) => (
+          {['Channel', 'Kind', 'Source', 'Used', 'Weight', 'Noise σ', 'Correction', 'RMS misfit', 'RMS / σ'].map((h) => (
             <TableCell key={h} sx={{ fontWeight: 600 }}>{h}</TableCell>
           ))}
         </TableRow>
@@ -100,13 +116,16 @@ function MisfitTable({ curves }) {
         {curves.map((c) => (
           <TableRow key={c.label} sx={{ opacity: c.used ? 1 : 0.5 }}>
             <TableCell sx={{ fontFamily: 'monospace' }}>{c.label}</TableCell>
+            <TableCell>{c.kind}</TableCell>
+            <TableCell sx={{ fontFamily: 'monospace' }}>{c.source}</TableCell>
             <TableCell>{c.used ? 'yes' : 'no'}</TableCell>
             <TableCell>{c.weight}</TableCell>
+            <TableCell>{c.unit === 'ohm.m' ? `${(100 * (10 ** c.sigma - 1)).toFixed(1)}%` : `${c.sigma} ${c.unit}`}</TableCell>
             <TableCell>{c.correction_applied ? 'Z-20 gain' : '–'}</TableCell>
-            <TableCell sx={{ color: c.used && c.rms_percent > 15 ? 'error.main' : undefined }}>
-              {c.rms_percent == null ? '–' : `${c.rms_percent.toFixed(1)}%`}
+            <TableCell>{misfitText(c)}</TableCell>
+            <TableCell sx={{ color: c.used && c.rms_normalised > 3 ? 'error.main' : undefined }}>
+              {c.rms_normalised == null ? '–' : c.rms_normalised.toFixed(2)}
             </TableCell>
-            <TableCell>{c.mean_residual_percent == null ? '–' : `${c.mean_residual_percent > 0 ? '+' : ''}${c.mean_residual_percent.toFixed(1)}%`}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -261,7 +280,8 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
               <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 3, rowGap: 0.5, mb: 1 }}>
                 <Stat label="Well" value={result.well} />
                 <Stat label="Interval" value={`${job.request.md_min_ft}–${job.request.md_max_ft} ft MD`} />
-                <Stat label="RMS misfit (used curves)" value={`${result.rms_percent_used}%`} />
+                <Stat label="RMS misfit (used resistivities)" value={result.rms_percent_used == null ? '–' : `${result.rms_percent_used}%`} />
+                <Stat label="Misfit / noise (all used)" value={result.misfit_normalised ?? '–'} />
                 <Stat label="Dip" value={`${result.model.dip_deg}° toward ${result.model.dip_azimuth_deg}°`} />
                 <Stat label="Stations" value={result.stations} />
                 <Stat label="Run time" value={`${result.elapsed_s}s`} />

@@ -53,30 +53,79 @@ class InversionTests(unittest.TestCase):
         self.assertAlmostEqual(out[0, j], 10 * 10 ** 0.08, places=6)
         self.assertAlmostEqual(out[1, j], 40 * 10 ** (0.08 + 0.12 * np.log10(4)), places=6)
         np.testing.assert_allclose(np.delete(out, j, axis=1), np.delete(10 ** theory, j, axis=1))
+
+
 class PlanTests(unittest.TestCase):
-    def test_qc_selection_maps_to_forward_channels(self):
+    def test_qc_selection_maps_to_directional_channels(self):
         from types import SimpleNamespace
 
         from backend.inversion.service import build_plan
 
-        names = ["ARH16PC", "ARH16P", "ARH16A", "ARM32A", "ZRL48P", "ARL48P", "ZGM112A", "ZRM50P", "GR"]
+        names = ["ARH16PC", "ARH16P", "ARH16A", "ARM32A", "ZRL48P", "ZRH16PT", "ZRH16P", "ZRH16PL",
+                 "ZGM112P", "ZRM50P", "GR"]
         run = SimpleNamespace(curves={n: None for n in names})
-        plan = build_plan(run, ["ARH16PC", "ARH16P", "ARH16A", "ARM32A", "ZRL48P", "ZGM112A", "ZRM50P", "GR"])
+        plan = build_plan(run, ["ARH16PC", "ARH16P", "ARH16A", "ARM32A", "ZRL48P", "ZRH16P", "ZRH16PL",
+                                "ZGM112P", "ZRM50P", "GR"])
         used = {u["label"]: u for u in plan["used"]}
-        self.assertEqual(used["ARH16P"]["curve"], "ARH16PC")
-        self.assertEqual(used["ARH16P"]["weight"], 1.0)
+        reasons = {i["curve"]: i["reason"] for i in plan["ignored"]}
+        self.assertTrue(plan["azimuthal"])
+        self.assertEqual((used["ARH16P"]["curve"], used["ARH16P"]["weight"]), ("ARH16PC", 1.0))
+        self.assertIn("same channel as ARH16PC", reasons["ARH16P"])
         self.assertEqual(used["ARH16A"]["weight"], 0.5)
         self.assertIsNotNone(used["ARH16A"]["correction"])
         self.assertEqual(used["ARM32A"]["weight"], 0.25)
-        self.assertIsNone(used["ARM32A"]["correction"])
-        reasons = {i["curve"]: i["reason"] for i in plan["ignored"]}
-        self.assertIn("same channel as ARH16PC", reasons["ARH16P"])
-        self.assertIn("ARL48P", reasons["ZRL48P"])
-        self.assertIn("geosignal", reasons["ZGM112A"])
-        self.assertIn("not in the 1.5D", reasons["ZRM50P"])
-        self.assertIn("not an ADR", reasons["GR"])
-        raw = build_plan(run, ["ARH16A"], calibration=False)["used"][0]
-        self.assertEqual((raw["weight"], raw["correction"]), (1.0, None))
+        # An image gives top and bottom: delivered T curve when present, else image bins 0 / 16.
+        self.assertEqual(plan["_sources"]["ZRH16PT"], "ZRH16PT")
+        self.assertEqual(plan["_sources"]["ZRH16PB"], ("ZRH16P", 16))
+        self.assertEqual(plan["_sources"]["ZRL48PT"], ("ZRL48P", 0))
+        self.assertEqual(used["ZRL48PB"]["kind"], "bottom")
+        self.assertEqual(plan["_sources"]["ZGM112PT"], ("ZGM112P", 0))
+        self.assertEqual(used["ZGM112PT"]["kind"], "geosignal")
+        self.assertIn("left/right", reasons["ZRH16PL"])
+        self.assertIn("long-spacing", reasons["ZRM50P"])
+        self.assertIn("context log", reasons["GR"])
+        averaged_only = build_plan(run, ["ARH16A"], calibration=False)
+        self.assertFalse(averaged_only["azimuthal"])
+        self.assertEqual((averaged_only["used"][0]["weight"], averaged_only["used"][0]["correction"]), (1.0, None))
+        self.assertTrue(any("above or below" in w for w in averaged_only["warnings"]))
+
+    def test_azimuthal_average_is_conductivity_mean_and_skips_bad_bins(self):
+        from backend.inversion.invert import azimuthal_average
+
+        image = np.array([[10.0, 10.0, 10.0, 10.0], [5.0, 20.0, np.nan, -999.25]])
+        np.testing.assert_allclose(azimuthal_average(image), [10.0, 8.0])
+
+
+class DirectionalForwardTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fwd = ADRForward(azimuthal=True)
+        cls.labels = cls.fwd.channel_labels()
+
+    def horizontal(self, z):
+        n = len(z)
+        return Trajectory(np.arange(n, dtype=float), np.column_stack([np.zeros(n), np.zeros(n), z]),
+                          np.tile([1.0, 0.0, 0.0], (n, 1)), np.tile([0.0, 0.0, -1.0], (n, 1)))
+
+    def values(self, model, z):
+        return [dict(zip(self.labels, row)) for row in self.fwd.predict(model, self.horizontal(np.array(z)))]
+
+    def test_homogeneous_has_equal_bins_and_zero_geosignal(self):
+        (v,) = self.values(LayerModel(np.array([]), np.array([10.0]), np.array([10.0])), [0.0])
+        for lab in ("ARH16P", "ZRH16PT", "ZRH16PB", "ZRL48AT"):
+            self.assertAlmostEqual(10 ** v[lab], 10.0, delta=0.02)
+        for lab in ("ZGM112PT", "ZGM112AT", "ZGL112PT"):
+            self.assertAlmostEqual(v[lab], 0.0, places=6)
+
+    def test_bottom_bin_sees_resistive_bed_below_and_mirror_flips_sign(self):
+        (below,) = self.values(LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0])), [0.8])
+        (above,) = self.values(LayerModel(np.array([-1.0]), np.array([50.0, 8.0]), np.array([50.0, 8.0])), [-0.8])
+        self.assertGreater(below["ZRL48PB"], below["ZRL48PT"])
+        # Delivered-data convention: top geosignal rises when the bottom bin reads more resistive.
+        self.assertGreater(below["ZGM112PT"], 1.0)
+        self.assertGreater(below["ZGM112AT"], 0.1)
+        self.assertAlmostEqual(above["ZRL48PT"], below["ZRL48PB"], places=6)
+        self.assertAlmostEqual(above["ZGM112PT"], -below["ZGM112PT"], places=6)
 
 
 if __name__ == "__main__":
