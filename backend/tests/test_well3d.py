@@ -121,12 +121,38 @@ class Well3dApiTests(unittest.TestCase):
         deep = np.array(self.get(curve="ARL48AC", max_points=500).json()["doi_m"])
         self.assertGreater(np.median(deep), np.median(doi))
 
-    def test_geosignal_doi_uses_deepest_resistivity(self):
-        client = TestClient(app)
-        zg = next(c for c in runs.get_run(GEOSIGNAL_RUN).curves if c.startswith("ZG"))
-        body = client.get(f"/runs/{GEOSIGNAL_RUN}/well3d", params={"curve": zg, "max_points": 200}).json()
+    def test_geosignal_doi_falls_back_to_deepest_resistivity_without_zr_image(self):
+        data = runs.get_run(GEOSIGNAL_RUN)
+        curves = {k: v for k, v in data.curves.items() if not (k.startswith("ZR") and v.ndim == 2)}
+        stripped = WellRun(data.path, data.well, data.depth_m, curves, data.metadata, data.parameters)
+        body = well3d.well3d(stripped, "ZGL112A", max_points=200)
         self.assertTrue(body["doi_source"].startswith("AR"))
-        self.assertEqual(len(body["doi_m"]), len(body["md_ft"]))
+        self.assertEqual(np.array(body["doi_m"]).shape, (len(body["md_ft"]),))
+
+    def test_geosignal_source_is_closest_spacing_at_same_frequency(self):
+        data = runs.get_run(GEOSIGNAL_RUN)
+        meta = data.metadata.set_index("curve")
+        for zg, expected in (("ZGL112A", "ZRL82A"), ("ZGL112P", "ZRL82P")):
+            self.assertEqual(well3d._reference_resistivity(data, {**meta.loc[zg].to_dict(), "curve": zg}), expected)
+        # No ZR image at the geosignal's frequency: deepest ZR image.
+        row = {**meta.loc["ZGL112A"].to_dict(), "curve": "ZGL112A", "frequency_hz": 1.0}
+        self.assertEqual(well3d._reference_resistivity(data, row), "ZRL82A")
+
+    def test_geosignal_doi_is_per_bin_and_monotonic_in_source_image(self):
+        body = self.get(run=GEOSIGNAL_RUN, curve="ZGL112A", max_points=300).json()
+        self.assertEqual(body["doi_source"], "ZRL82A")
+        doi = np.array(body["doi_m"], dtype=float)
+        self.assertEqual(doi.shape, (len(body["md_ft"]), 32))
+        self.assertTrue(np.all(np.isfinite(doi)))
+        source = self.get(run=GEOSIGNAL_RUN, curve=body["doi_source"], max_points=300).json()
+        self.assertEqual(source["md_ft"], body["md_ft"])
+        values = np.array([[np.nan if v is None else v for v in row] for row in source["values"]])
+        rings = np.flatnonzero(np.isfinite(values).all(axis=1))
+        self.assertGreater(len(rings), 0)
+        for i in rings:
+            order = np.argsort(values[i], kind="stable")
+            self.assertTrue(np.all(np.diff(doi[i][order]) >= -1e-9), f"ring {i}")
+        self.assertGreater(np.median(doi.max(axis=1) - doi.min(axis=1)), 0)
 
     def test_image_curve_rows_of_32(self):
         body = self.get(curve="ZRM48A", max_points=200).json()

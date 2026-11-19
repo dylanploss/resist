@@ -139,17 +139,44 @@ def doi_metres(rho_ohmm, frequency_hz: float, spacing_in: float, measurement: st
     return factor / np.sqrt(1 / skin ** 2 + 1 / cap ** 2)
 
 
+def _row_doi_index(r) -> float:
+    return metrics.doi_index(r["spacing_in"], r["frequency_hz"], r["measurement"])
+
+
+def _geosignal_image_source(data: WellRun, row: dict) -> str | None:
+    """ZR resistivity image that gives a ZG geosignal its directional shape.
+
+    Same frequency first (ZGL112A -> ZRL..), closest spacing, then the same measurement (A/P);
+    without a ZR image at that frequency, the deepest-reading ZR image. None without any ZR image.
+    """
+    meta = data.metadata
+    zr = meta[(meta["family"] == "ZR") & (meta["unit"] == "ohmm") & (meta["valid_fraction"] >= 0.5)]
+    zr = zr[[np.ndim(data.curves.get(c)) == 2 for c in zr["curve"]]]
+    if zr.empty:
+        return None
+    same = zr[zr["frequency_hz"] == row["frequency_hz"]]
+    if not same.empty:
+        key = same.apply(lambda r: (abs(r["spacing_in"] - row["spacing_in"]),
+                                    r["measurement"] != row["measurement"], r["curve"]), axis=1)
+        return str(same.loc[key.sort_values().index[0], "curve"])
+    return str(zr.loc[zr.apply(_row_doi_index, axis=1).idxmax(), "curve"])
+
+
 def _reference_resistivity(data: WellRun, row: dict) -> str | None:
-    """The curve whose resistivity sets the DOI: the curve itself if it is a resistivity, else the
-    run's deepest-reading AR resistivity with at least half its samples valid."""
+    """The curve whose resistivity sets the DOI: the curve itself if it is a resistivity; for a ZG
+    geosignal image the matching ZR image (see _geosignal_image_source); else the run's
+    deepest-reading AR resistivity with at least half its samples valid."""
     if row.get("family") in ("AR", "ZR") and row.get("unit") == "ohmm":
         return row["curve"]
+    if row.get("family") == "ZG" and np.ndim(data.curves.get(row["curve"])) == 2:
+        image = _geosignal_image_source(data, row)
+        if image is not None:
+            return image
     meta = data.metadata
     ar = meta[(meta["family"] == "AR") & (meta["unit"] == "ohmm") & (meta["valid_fraction"] >= 0.5)]
     if ar.empty:
         return None
-    depth = ar.apply(lambda r: metrics.doi_index(r["spacing_in"], r["frequency_hz"], r["measurement"]), axis=1)
-    return str(ar.loc[depth.idxmax(), "curve"])
+    return str(ar.loc[ar.apply(_row_doi_index, axis=1).idxmax(), "curve"])
 
 
 def doi_profile(data: WellRun, row: dict, idx: np.ndarray, md_ft: np.ndarray) -> dict | None:
@@ -157,7 +184,8 @@ def doi_profile(data: WellRun, row: dict, idx: np.ndarray, md_ft: np.ndarray) ->
 
     Azimuthal resistivity images give one DOI per bin (shape n x bins), from the same bin values
     that colour the tube, so the reach grows only on the side where the image turns resistive (red).
-    Other curves give one DOI per sample.
+    ZG geosignal images take the per-bin shape from the matching ZR image (`source`), with the
+    geosignal's own frequency and spacing. Other curves give one DOI per sample.
     """
     if row.get("family") not in ("AR", "ZR", "ZG"):
         return None
