@@ -87,6 +87,15 @@ def curve(run: str, name: str, start_ft: float | None = None, end_ft: float | No
     }
 
 
+@router.get("/runs/{run}/selection")
+def saved_selection(run: str) -> dict:
+    _path(run)
+    path = SELECTION_DIR / f"{run}.json"
+    if not path.exists():
+        raise HTTPException(404, f"no saved selection for run {run}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 @router.post("/runs/{run}/selection")
 def save_selection(run: str, request: SelectionRequest) -> dict:
     _path(run)

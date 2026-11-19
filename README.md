@@ -32,7 +32,11 @@ Key findings:
 - **Windowed Levenberg-Marquardt inversion** with 50% overlap and continuity regularization: full 11-run inversion in 1–8 hours on a laptop.
 - **Dip accommodation:** Use wellbore trajectory to rotate stratigraphy into tool frame; dip emerges naturally.
 
-See [docs/inversion/RESEARCH_SUMMARY.md](docs/inversion/RESEARCH_SUMMARY.md) for high-level overview and [docs/inversion/IMPLEMENTATION_PLAN.md](docs/inversion/IMPLEMENTATION_PLAN.md) for detailed 6-week roadmap with workstreams, risks, and success criteria.
+See [docs/inversion/RESEARCH_SUMMARY.md](docs/inversion/RESEARCH_SUMMARY.md) for high-level overview and [docs/inversion/HACKATHON_PLAN.md](docs/inversion/HACKATHON_PLAN.md) for the implemented 1.5D inversion, the Z-20 misfit study and correction factors, and the 2-day hackathon schedule.
+
+Run the misfit study: `python -m backend.inversion.misfit_study --well Z-20 --md-min 20100 --md-max 20500 --output out/z20`.
+
+In the app, the **Inversion** tab inverts the curves chosen on the **QC selection** tab (button *Invert this selection →*) and shows the layered model, a curtain section, and measured vs modelled logs.
 
 ## Documentation
 

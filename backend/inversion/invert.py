@@ -1,0 +1,395 @@
+"""Windowed 1.5D inversion of ADR averaged resistivities with optional per-channel corrections.
+
+Data space: log10 apparent resistivity for every (channel, phase|attenuation) curve.
+Model space (one window): K planar TIV layers sharing a signed dip along the well azimuth,
+plus optional per-curve correction terms ``b_c``:
+
+    log10 R_measured = log10 R_theory(model) + b_c
+
+``b_c`` absorbs tool-versus-theory mismatch (mandrel, borehole, vendor transform, calibration).
+A common shift of every ``b_c`` is indistinguishable from scaling Rh/Rv, so the biases of the
+reference curves are constrained to zero mean.
+"""
+
+from __future__ import annotations
+
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+from scipy.optimize import least_squares
+
+from backend.inversion.adr_forward import FT, ADRForward, LayerModel, Trajectory
+
+DEFAULT_REFERENCE = ("ARH16P", "ARH32P", "ARH48P", "ARM16P", "ARM32P", "ARM48P", "ARL48P")
+
+# Z-20 20100-20500 ft study (docs/inversion/HACKATHON_PLAN.md): phase agrees with theory within a few
+# percent; 2 MHz attenuation reads systematically high (corrected below); 500k/125k attenuation shows no
+# transferable correction, so it is QC-only by default.
+HACKATHON_WEIGHTS = {"ARH16A": 0.5, "ARH32A": 0.5, "ARH48A": 0.5,
+                     "ARM16A": 0.0, "ARM32A": 0.0, "ARM48A": 0.0, "ARL48A": 0.0}
+Z20_ATTENUATION_CORRECTION = {"ARH16A": (0.0820, 0.1251), "ARH32A": (0.0567, 0.0871), "ARH48A": (0.0526, 0.0760)}
+
+
+@dataclass
+class IntervalData:
+    well: str
+    md_ft: np.ndarray
+    traj: Trajectory
+    obs: np.ndarray            # (n, n_curves) log10 ohm-m
+    labels: list
+    gr: np.ndarray
+    ref_ned: np.ndarray        # absolute NED of the reference point (m)
+    tvd_ft: np.ndarray
+    valid: np.ndarray | None = None   # (n, n_curves) True where a measured value exists
+
+    def subset(self, mask):
+        traj = Trajectory(self.traj.md_ft[mask], self.traj.ned[mask], self.traj.axis[mask])
+        return IntervalData(self.well, self.md_ft[mask], traj, self.obs[mask], self.labels,
+                            self.gr[mask], self.ref_ned, self.tvd_ft[mask],
+                            None if self.valid is None else self.valid[mask])
+
+    def tvd_rel_ft(self, tvd_ft):
+        return (np.asarray(tvd_ft) * FT - self.ref_ned[2]) / FT
+
+
+def load_interval(path, md_min, md_max, fwd: ADRForward, step_ft=2.0, corrected=False):
+    from backend.data.loader import load_run
+
+    sfx = "C" if corrected else ""
+    sources = {lab: lab + sfx for lab in fwd.channel_labels()}
+    return interval_from_run(load_run(path), md_min, md_max, fwd, step_ft, sources)
+
+
+TRAJECTORY_CURVES = ("TVD", "INC", "AZI", "UTMX", "UTMY")
+
+
+def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources=None, required=None):
+    """Interval data for a loaded WellRun.
+
+    ``sources`` maps each forward-model label (e.g. ``ARH16P``) to the delivered curve to use (``ARH16P`` or
+    ``ARH16PC``); labels without a usable source are kept as NaN-free zeros and must get weight 0.
+    Stations are dropped only where a ``required`` label (default: all sourced labels) or the trajectory is missing.
+    """
+    c = run.curves
+    missing = [k for k in TRAJECTORY_CURVES if k not in c]
+    if missing:
+        raise ValueError(f"run lacks trajectory curves needed for 1.5D inversion: {', '.join(missing)}")
+    labels = fwd.channel_labels()
+    sources = {lab: src for lab, src in (sources or {lab: lab for lab in labels}).items() if src in c}
+    required = list(sources) if required is None else list(required)
+    md = c["DEPT"]
+    idx = np.flatnonzero((md >= md_min) & (md <= md_max))
+    if len(idx) > 1:
+        idx = idx[::max(1, int(round(step_ft / np.median(np.diff(md[idx])))))]
+    obs = np.column_stack([c[sources[lab]][idx] if lab in sources else np.full(len(idx), np.nan) for lab in labels])
+    traj_cols = [c[k][idx] for k in TRAJECTORY_CURVES]
+    req = [labels.index(lab) for lab in required]
+    ok = np.all(np.isfinite(obs[:, req]) & (obs[:, req] > 0), axis=1) & np.all([np.isfinite(t) for t in traj_cols], axis=0)
+    if ok.sum() < 3:
+        raise ValueError(f"fewer than 3 stations with complete data between {md_min} and {md_max} ft MD")
+    tvd, inc, azi, ue, un = (t[ok] for t in traj_cols)
+    ref = np.array([un.mean(), ue.mean(), tvd.mean() * FT])
+    traj = Trajectory.from_curves(md[idx][ok], tvd, inc, azi, ue, un, ref=ref)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log_obs = np.log10(obs[ok])
+    valid = np.isfinite(log_obs)
+    log_obs[~valid] = 0.0
+    gr = c["GR"][idx][ok] if "GR" in c else np.full(int(ok.sum()), np.nan)
+    return IntervalData(run.well, md[idx][ok], traj, log_obs, labels, gr, ref, tvd, valid)
+
+
+# ---------------------------------------------------------------------------- parameterisation
+@dataclass
+class FitConfig:
+    n_layers: int = 3
+    shared_anisotropy: bool = True
+    fit_dip: bool = True
+    fit_bias: bool = False
+    fixed_bias: np.ndarray | None = None
+    reference: tuple = DEFAULT_REFERENCE
+    bias_prior: float = 0.1            # decades, weak Tikhonov prior on b_c
+    sigma: float = 0.02                # decades, data standard deviation
+    curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
+    level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
+    max_nfev: int = 25
+
+
+@dataclass
+class Layout:
+    cfg: FitConfig
+    n_curves: int
+    dip_azimuth: float
+
+    @property
+    def n_aniso(self):
+        return 1 if self.cfg.shared_anisotropy else self.cfg.n_layers
+
+    @property
+    def n_earth(self):
+        k = self.cfg.n_layers
+        return (k - 1) + k + self.n_aniso + int(self.cfg.fit_dip)
+
+    @property
+    def n_params(self):
+        return self.n_earth + (self.n_curves if self.cfg.fit_bias else 0)
+
+    def model(self, x):
+        k = self.cfg.n_layers
+        i = k - 1
+        bounds = (np.concatenate([[x[0]], x[0] + np.cumsum(x[1:k - 1])]) * FT) if k > 1 else np.array([])
+        lrh = x[i:i + k]; i += k
+        la = x[i:i + self.n_aniso]; i += self.n_aniso
+        dip = x[i] if self.cfg.fit_dip else 0.0
+        rh = 10 ** lrh
+        rv = rh * 10 ** (np.repeat(la, k) if self.n_aniso == 1 else la)
+        return LayerModel(bounds, rh, rv, dip, self.dip_azimuth)
+
+    def bias(self, x):
+        if self.cfg.fit_bias:
+            return x[self.n_earth:]
+        if self.cfg.fixed_bias is not None:
+            return np.asarray(self.cfg.fixed_bias)
+        return np.zeros(self.n_curves)
+
+    def bounds(self, tvd_lo, tvd_hi):
+        k = self.cfg.n_layers
+        lo = [tvd_lo] + [0.5] * (k - 2) + [-1.0] * k + [0.0] * self.n_aniso
+        hi = [tvd_hi] + [60.0] * (k - 2) + [3.0] * k + [1.0] * self.n_aniso
+        if k == 1:
+            lo, hi = lo[1:], hi[1:]
+        if self.cfg.fit_dip:
+            lo.append(-15.0); hi.append(15.0)
+        if self.cfg.fit_bias:
+            lo += [-0.5] * self.n_curves; hi += [0.5] * self.n_curves
+        return np.array(lo), np.array(hi)
+
+    def steps(self):
+        k = self.cfg.n_layers
+        s = [0.05] * (k - 1) + [0.004] * k + [0.004] * self.n_aniso + ([0.05] if self.cfg.fit_dip else [])
+        return np.array(s)
+
+
+# ---------------------------------------------------------------------------- parallel forward
+_FWD: ADRForward | None = None
+_TRAJ: Trajectory | None = None
+
+
+def _init_worker(receiver_sep_in, traj):
+    global _FWD, _TRAJ
+    _FWD = ADRForward(receiver_sep_in=receiver_sep_in)
+    _FWD.tables()
+    _TRAJ = traj
+
+
+def _predict(model: LayerModel):
+    rp, ra = _FWD.simulate(model, _TRAJ)
+    return np.log10(np.column_stack([rp, ra]))
+
+
+@dataclass
+class FitResult:
+    x: np.ndarray
+    model: LayerModel
+    bias: np.ndarray
+    pred: np.ndarray           # log10 theory + bias
+    theory: np.ndarray         # log10 theory only
+    residual: np.ndarray       # obs - pred (decades)
+    labels: list
+    cost: float
+    nfev: int
+    extra: dict = field(default_factory=dict)
+
+    def rms_percent(self, axis=None):
+        return 100 * (10 ** np.sqrt(np.mean(self.residual ** 2, axis=axis)) - 1)
+
+    def summary(self):
+        m = self.model
+        return {
+            "boundaries_tvd_rel_ft": (m.boundaries_m / FT).round(2).tolist(),
+            "rh": m.rh.round(2).tolist(), "rv": m.rv.round(2).tolist(),
+            "dip_deg": round(float(m.dip_deg), 2), "dip_azimuth_deg": round(float(m.dip_azimuth_deg), 1),
+            "rms_percent": round(float(self.rms_percent()), 2),
+            "rms_percent_by_curve": dict(zip(self.labels, self.rms_percent(axis=0).round(2).tolist())),
+            "mean_residual_percent_by_curve": dict(zip(self.labels, (100 * (10 ** self.residual.mean(0) - 1)).round(2).tolist())),
+            "correction_factor_by_curve": dict(zip(self.labels, (10 ** self.bias).round(4).tolist())),
+            "nfev": self.nfev,
+        }
+
+
+class Inverter:
+    """Parallel finite-difference Levenberg-Marquardt (trust-region) fit for one window."""
+
+    def __init__(self, data: IntervalData, cfg: FitConfig, receiver_sep_in=8.0, workers=None, on_eval=None):
+        self.data, self.cfg = data, cfg
+        self.on_eval = on_eval
+        az = float(np.rad2deg(np.arctan2(data.traj.axis[:, 1].mean(), data.traj.axis[:, 0].mean())))
+        self.lay = Layout(cfg, data.obs.shape[1], az)
+        self.ref_idx = np.array([data.labels.index(r) for r in cfg.reference if r in data.labels])
+        w = cfg.curve_weights or {}
+        self.w = np.array([float(w.get(lab, 1.0)) for lab in data.labels]) / cfg.sigma
+        self.pool = ProcessPoolExecutor(max_workers=workers or min(16, self.lay.n_earth + 1),
+                                        initializer=_init_worker, initargs=(receiver_sep_in, data.traj))
+        self._cache = {}
+
+    def close(self):
+        self.pool.shutdown()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def _theory_batch(self, xs):
+        keys = [tuple(np.round(x[:self.lay.n_earth], 10)) for x in xs]
+        todo = [(k, x) for k, x in zip(keys, xs) if k not in self._cache]
+        uniq = dict(todo)
+        if uniq:
+            for k, p in zip(uniq, self.pool.map(_predict, [self.lay.model(x) for x in uniq.values()])):
+                self._cache[k] = p
+        if len(self._cache) > 64:
+            for k in list(self._cache)[:-32]:
+                if k not in keys:
+                    del self._cache[k]
+        return [self._cache[k] for k in keys]
+
+    def _corrected(self, theory):
+        lc = self.cfg.level_correction
+        return theory if lc is None else lc.apply_to_theory(theory)
+
+    def _dcorr(self):
+        lc = self.cfg.level_correction
+        return np.ones(self.lay.n_curves) if lc is None else 1.0 + lc.g
+
+    def _resid(self, x, theory):
+        r = ((self._corrected(theory) + self.lay.bias(x) - self.data.obs) * self.w).ravel()
+        if not self.cfg.fit_bias:
+            return r
+        b = self.lay.bias(x)
+        prior = b / self.cfg.bias_prior
+        ref = np.array([b[self.ref_idx].sum() * 100.0])
+        return np.concatenate([r, prior, ref])
+
+    def fun(self, x):
+        if self.on_eval:
+            self.on_eval()
+        return self._resid(x, self._theory_batch([x])[0])
+
+    def jac(self, x):
+        ne = self.lay.n_earth
+        steps = self.lay.steps()
+        xs = [x]
+        for j in range(ne):
+            xp = x.copy(); xp[j] += steps[j]; xs.append(xp)
+        th = self._theory_batch(xs)
+        n, m = self.data.obs.shape
+        J = np.zeros((len(self._resid(x, th[0])), self.lay.n_params))
+        for j in range(ne):
+            J[:n * m, j] = ((th[j + 1] - th[0]) / steps[j] * self.w * self._dcorr()).ravel()
+        if self.cfg.fit_bias:
+            nb = self.lay.n_curves
+            J[:n * m, ne:] = np.tile(np.diag(self.w), (n, 1))
+            J[n * m:n * m + nb, ne:] = np.eye(nb) / self.cfg.bias_prior
+            J[-1, ne + self.ref_idx] = 100.0
+        return J
+
+    def fit(self, x0):
+        tvd_rel = self.data.tvd_rel_ft(self.data.tvd_ft)
+        lo, hi = self.lay.bounds(tvd_rel.min() - 40, tvd_rel.max() + 40)
+        x0 = np.clip(np.asarray(x0, float), lo + 1e-9, hi - 1e-9)
+        sol = least_squares(self.fun, x0, jac=self.jac, bounds=(lo, hi), method="trf",
+                            x_scale="jac", max_nfev=self.cfg.max_nfev)
+        theory = self._theory_batch([sol.x])[0]
+        bias = self.lay.bias(sol.x)
+        pred = self._corrected(theory) + bias
+        return FitResult(sol.x, self.lay.model(sol.x), bias, pred, theory, self.data.obs - pred,
+                         self.data.labels, float(sol.cost), int(sol.nfev))
+
+    def multistart(self, starts):
+        best = None
+        for x0 in starts:
+            r = self.fit(x0)
+            if best is None or r.cost < best.cost:
+                best = r
+        return best
+
+    def x_from(self, boundaries_rel_ft, log_rh, log_aniso, dip=0.0, bias=None):
+        b = list(boundaries_rel_ft)
+        layer_part = ([b[0]] + list(np.diff(b))) if b else []
+        x = layer_part + list(log_rh) + list(np.atleast_1d(log_aniso)[:self.lay.n_aniso])
+        if self.cfg.fit_dip:
+            x.append(dip)
+        if self.cfg.fit_bias:
+            x += list(np.zeros(self.lay.n_curves) if bias is None else bias)
+        return np.array(x, float)
+
+
+def default_run_path(data_dir: str | Path, well_token: str):
+    hits = sorted(Path(data_dir).glob(f"*{well_token}*.dlis"))
+    if not hits:
+        raise FileNotFoundError(f"no DLIS matching {well_token} in {data_dir}")
+    return hits[0]
+
+
+def default_starts(inv: Inverter, data: IntervalData, k: int, bias=None, weights=None):
+    """Three starts that slide the first boundary through the TVD range of the window, with the low and
+    high resistivity levels taken from the phase curves (or all weighted curves when no phase is used)."""
+    w = np.ones(len(data.labels)) if weights is None else np.asarray(weights, float)
+    cols = [j for j, lab in enumerate(data.labels) if lab.endswith("P") and w[j] > 0] or \
+        [j for j in range(len(data.labels)) if w[j] > 0]
+    level = 10 ** np.median(data.obs[:, cols], axis=1)
+    if k == 1:
+        return [inv.x_from([], [np.log10(np.median(level))], 0.1, 0.0, bias)]
+    tvd = data.tvd_rel_ft(data.tvd_ft)
+    low, high = np.log10(np.percentile(level, 15)), np.log10(np.percentile(level, 90))
+    starts = []
+    for b1 in np.linspace(tvd.min(), tvd.max() + 5, 3):
+        bs = [b1 + 6 * j for j in range(k - 1)]
+        rh = [low, high] + [0.5 * (low + high)] * (k - 2)
+        starts.append(inv.x_from(bs, rh[:k], 0.1, 0.0, bias))
+    return starts
+
+
+@dataclass
+class LevelCorrection:
+    """Per-curve, resistivity-dependent correction in log space:
+
+        log10 R_measured = log10 R_theory + a_c + g_c * (log10 R_theory - pivot)
+
+    ``g_c = 0`` reduces to a constant multiplicative factor ``10**a_c``. Curves not listed are
+    left uncorrected. Fit on residuals from a model that did not use the corrected curves.
+    """
+
+    labels: list
+    a: np.ndarray
+    g: np.ndarray
+    pivot: float = 1.0
+
+    @classmethod
+    def fit(cls, theory, obs, labels, curves, gain=True, pivot=1.0):
+        a = np.zeros(len(labels)); g = np.zeros(len(labels))
+        for lab in curves:
+            j = labels.index(lab)
+            x = theory[:, j] - pivot
+            A = np.column_stack([np.ones_like(x), x]) if gain else np.ones((len(x), 1))
+            coef, *_ = np.linalg.lstsq(A, obs[:, j] - theory[:, j], rcond=None)
+            a[j] = coef[0]; g[j] = coef[1] if gain else 0.0
+        return cls(list(labels), a, g, pivot)
+
+    @classmethod
+    def from_table(cls, labels, table, pivot=1.0):
+        """table: {curve: (a, g)} in decades, e.g. Z20_ATTENUATION_CORRECTION."""
+        a = np.array([table.get(lab, (0.0, 0.0))[0] for lab in labels], float)
+        g = np.array([table.get(lab, (0.0, 0.0))[1] for lab in labels], float)
+        return cls(list(labels), a, g, pivot)
+
+    def apply_to_theory(self, theory):
+        return theory + self.a + self.g * (theory - self.pivot)
+
+    def to_measured_frame(self):
+        return {lab: {"factor_at_10_ohmm": round(float(10 ** self.a[j]), 4),
+                      "gain_per_decade": round(float(self.g[j]), 4),
+                      "factor_at_40_ohmm": round(float(10 ** (self.a[j] + self.g[j] * (np.log10(40) - self.pivot))), 4)}
+                for j, lab in enumerate(self.labels) if self.a[j] or self.g[j]}

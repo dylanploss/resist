@@ -60,7 +60,7 @@ Rules:
 
 ## Endpoints
 
-Implemented in `backend/app.py` (data and QC) and `backend/qc/api.py` (QC visualization router, included by `app.py`). A run id is the DLIS file name without `.dlis`, for example `2_4-Z-6_16954-20950ft_RES_GEOSIGNAL`. Runs are read from `DATA_DIR` (default `<repo>/data`). A run is parsed on first use and cached for the life of the process; both modules share that cache.
+Implemented in `backend/app.py` (data and QC), `backend/qc/api.py` (QC visualization router) and `backend/inversion/api.py` (inversion router), both included by `app.py`. A run id is the DLIS file name without `.dlis`, for example `2_4-Z-6_16954-20950ft_RES_GEOSIGNAL`. Runs are read from `DATA_DIR` (default `<repo>/data`). A run is parsed on first use and cached for the life of the process; both modules share that cache.
 
 | Method | Path | Request | Response |
 |--------|------|---------|----------|
@@ -72,6 +72,11 @@ Implemented in `backend/app.py` (data and QC) and `backend/qc/api.py` (QC visual
 | GET | `/runs/{run}/qc` | query `n_select` (default 8) | QC selection JSON above for that run |
 | GET | `/runs/{run}/curves/{name}` | query `start_ft`, `end_ft`, `max_points` (default 1500, 50 to 20000) | `{"run", "curve", "unit", "family", "image", "stride", "md_ft", "values"}` |
 | POST | `/runs/{run}/selection` | `{"curves": [..], "n_select": 8}` | Saved selection record |
+| GET | `/runs/{run}/selection` | none | Saved selection record (404 if none saved) |
+| GET | `/inversion/defaults` | query `run` | `{"run", "md_min_ft", "md_max_ft", "reason", "channels", "max_stations", "max_interval_ft"}` |
+| POST | `/inversion/plan` | inversion request (below) | `{"used": [..], "ignored": [{"curve", "reason"}], "calibration", "warnings", "estimated_stations"}` |
+| POST | `/inversion/jobs` | inversion request (below) | Job: `{"id", "run", "status", "progress", "message", "request", "plan", "error", "elapsed_s", "result"}` |
+| GET | `/inversion/jobs/{id}` | none | Job; `result` is set when `status` is `done` |
 
 Details:
 - `/runs` reads only DLIS headers. `label` is the run id without `_RES_GEOSIGNAL`. `well` and the depth range are null if the header is unreadable, and the entry then has an `error` field.
@@ -80,6 +85,9 @@ Details:
 - `/qc/select` and `/runs/{run}/qc`: `n_select` defaults to 8 and must be within 5 to 10.
 - `/runs/{run}/curves/{name}` returns every `stride`th sample (thinned, not averaged) between `start_ft` and `end_ft`; images are returned as 32 bins x depth.
 - `/runs/{run}/selection` saves `backend/output/selections/{run}.json` (override with `RESIST_SELECTION_DIR`) with `curves`, `auto_selected`, `added`, `removed` and `overridden_rejections`.
+- Inversion request: `{"run", "curves": [QC-selected names], "md_min_ft", "md_max_ft", "step_ft": 4, "layers": 3, "calibration": true, "quick": false}`. The interval is at most 1500 ft and 250 stations.
+- The inversion plan maps the QC selection onto the 1.5D forward model (`backend/inversion/service.py`). `AR` curves are used; a `C` curve uses the vendor-corrected data for that channel. Phase has weight 1. With `calibration` on, 2 MHz attenuation has weight 0.5 and the Z-20 resistivity-dependent correction, and 500/125 kHz attenuation has weight 0.25. `ZR`/`ZG` and conventional curves are listed under `ignored` with a reason.
+- Jobs run one at a time in a background thread (status `queued` → `running` → `done` or `error`). `result` holds `md_ft`, `tvd_ft`, `inclination_deg`, `curves` (per channel: `obs`, `pred`, `theory`, `used`, `weight`, `rms_percent`, `mean_residual_percent`), `model` (`layers` with `rh`, `rv`, `top_tvd_ft`, `bottom_tvd_ft`; `dip_deg`; `dip_azimuth_deg`; `boundary_tvd_ft` per station), and `rms_percent_used`. Jobs are kept in memory only.
 
 Errors use `{"error": "<message>"}`:
 

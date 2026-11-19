@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useCallback, useState } from 'react'
 import { AppBar, Box, Container, CssBaseline, LinearProgress, Tab, Tabs, ThemeProvider, Toolbar, Typography, createTheme } from '@mui/material'
 import { getRuns } from './api.js'
 import { useApi } from './hooks/useApi.js'
@@ -8,6 +8,7 @@ import OverviewPage from './pages/OverviewPage.jsx'
 // Lazy pages load on first visit: Modelling bundles the UDAR core, QC bundles Plotly.
 const ModellingPage = lazy(() => import('./pages/ModellingPage.jsx'))
 const QcPage = lazy(() => import('./pages/QcPage.jsx'))
+const InversionPage = lazy(() => import('./pages/InversionPage.jsx'))
 
 const theme = createTheme({ palette: { primary: { main: '#2a78d6' } } })
 
@@ -15,6 +16,7 @@ const PAGES = [
   { id: 'overview', label: 'Overview' },
   { id: 'data', label: 'Data' },
   { id: 'qc', label: 'QC selection' },
+  { id: 'inversion', label: 'Inversion' },
   { id: 'udar', label: 'Modelling (UDAR)' },
 ]
 
@@ -22,12 +24,15 @@ function App() {
   const [page, setPage] = useState('overview')
   const [opened, setOpened] = useState({})
   const [run, setRun] = useState('')
+  const [qcSelections, setQcSelections] = useState({})
   const runs = useApi(getRuns, 'runs')
 
-  const openPage = (v) => {
+  const openPage = useCallback((v) => {
     setPage(v)
     setOpened((o) => (o[v] ? o : { ...o, [v]: true }))
-  }
+  }, [])
+  const onSelectionChange = useCallback(
+    (r, curves) => setQcSelections((s) => (s[r] === curves ? s : { ...s, [r]: curves })), [])
 
   return (
     <ThemeProvider theme={theme}>
@@ -54,7 +59,16 @@ function App() {
         <Box hidden={page !== 'qc'}>
           {opened.qc && (
             <Suspense fallback={<LinearProgress />}>
-              <QcPage runs={runs} run={run} onRunChange={setRun} />
+              <QcPage runs={runs} run={run} onRunChange={setRun} onSelectionChange={onSelectionChange}
+                onOpenInversion={() => openPage('inversion')} />
+            </Suspense>
+          )}
+        </Box>
+        <Box hidden={page !== 'inversion'}>
+          {opened.inversion && (
+            <Suspense fallback={<LinearProgress />}>
+              <InversionPage runs={runs} run={run} onRunChange={setRun} liveSelection={qcSelections[run]}
+                onOpenQc={() => openPage('qc')} />
             </Suspense>
           )}
         </Box>

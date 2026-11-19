@@ -179,8 +179,9 @@ The ADR dossier leaves several tool parameters unspecified. We handle them as nu
 
 ✓ **docs/inversion/ADR_1D5_strategy.md** – 9 KB comprehensive strategy document  
 ✓ **docs/inversion/IMPLEMENTATION_PLAN.md** – 15 KB implementation roadmap with workstreams, risks, success criteria  
-✓ **backend/inversion/harmonics.py** – Harmonic fitting module (ready for unit tests)  
-✓ **backend/inversion/forward_vti.py** – 1D VTI forward model interface and coordinate transforms  
+✓ **backend/inversion/adr_forward.py** – 1.5D forward model (empymod, TIV, dip, trajectory)  
+✓ **backend/inversion/invert.py** – windowed LM inversion with per-curve weights and corrections  
+✓ **docs/inversion/HACKATHON_PLAN.md** – Z-20 misfit study, correction factors, 2-day schedule  
 
 ---
 
