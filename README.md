@@ -20,3 +20,9 @@ Follow [SETUP.md](SETUP.md) for Mac and Windows commands. In short:
 - [docs/api/contract.md](docs/api/contract.md): curve table, QC JSON, and endpoints.
 - [docs/plans/resist-platform-dev-plan.md](docs/plans/resist-platform-dev-plan.md): work plan and workstream owners.
 - [competitor UDAR inversion background](background/competitor-udar-inversion.md): summary of a related SPWLA paper and its relationship to the Ekofisk data release.
+
+## Data analysis
+
+The [Ekofisk analysis CLI](docs/data/ekofisk-format.md) inventories all ten wells
+(eleven runs), plots measurements, and flags sustained transition candidates.
+Geological labels remain unknown until calibrated interpretation rules are supplied.
