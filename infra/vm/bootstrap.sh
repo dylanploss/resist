@@ -12,7 +12,7 @@ if ! command -v python3.12 >/dev/null; then
   sudo -E apt-get install -yq software-properties-common
   sudo -E add-apt-repository -y ppa:deadsnakes/ppa
   sudo -E apt-get update -q
-  sudo -E apt-get install -yq python3.12 python3.12-venv python3.12-dev build-essential git
+  sudo -E apt-get install -yq -o Acquire::Retries=5 python3.12 python3.12-venv build-essential git
 fi
 if ! command -v az >/dev/null; then
   curl -sL https://aka.ms/InstallAzureCLIDeb | sudo -E bash

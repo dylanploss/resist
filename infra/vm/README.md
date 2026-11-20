@@ -11,7 +11,7 @@ snapshot can be copied back and committed.
 | Cost | Linux PAYG, Sweden Central: F72s_v2 ≈ $3.49/h, F64as_v6 ≈ $4.67/h, D64as_v5 ≈ $2.94/h (+ disk/IP, small) |
 | Auto-shutdown | 22:00 W. Europe (deallocates; compute billing stops) |
 | Access | SSH only, NSG allows the creator's public IP; key `~/.ssh/resist_vm_ed25519` (never committed) |
-| Identity | system-assigned, **Contributor on `resist-hackathon-rg` only** (for `az cosmosdb keys list`) |
+| Identity | system-assigned; `create-vm.ps1` grants it **Contributor on `resist-hackathon-rg` only** (for `az cosmosdb keys list`). Granting needs Owner / User Access Administrator; without it `run-grid.ps1` reads the key with *your* az login and hands it to the grid process over SSH stdin (env only: never printed, never on disk) |
 
 ## Use
 
