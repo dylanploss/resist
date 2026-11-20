@@ -21,10 +21,10 @@ fi
 sudo mkdir -p "$APP" && sudo chown "$(id -u):$(id -g)" "$APP"
 if [ -d "$APP/.git" ]; then
   git -C "$APP" fetch -q "$BUNDLE" HEAD
-  git -C "$APP" checkout -q --detach FETCH_HEAD
+  git -C "$APP" checkout -q --force --detach FETCH_HEAD
 else
-  git clone -q "$BUNDLE" "$APP.tmp" && cp -a "$APP.tmp/." "$APP/" && rm -rf "$APP.tmp"
-  git -C "$APP" checkout -q --detach HEAD
+  git clone -q --no-checkout "$BUNDLE" "$APP"
+  git -C "$APP" checkout -q --detach "$(git ls-remote "$BUNDLE" HEAD | cut -f1)"
 fi
 git -C "$APP" log --oneline -1
 
