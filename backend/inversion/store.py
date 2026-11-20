@@ -50,6 +50,21 @@ def summary_of(record: dict) -> dict:
             "misfit_normalised": result.get("misfit_normalised")}
 
 
+def overview_of(record: dict, stores: list[str] | None = None) -> dict:
+    """Listing entry for the management page: the record without ``result``, plus the well and scalar ``stats``.
+    ``stores`` names where the record lives (``cosmos``, ``snapshot``, ``memory``)."""
+    result = record.get("result") or {}
+    out = copy.deepcopy({k: v for k, v in record.items() if k not in ("result", "summary")})
+    out["well"] = result.get("well")
+    out["stats"] = {"stations": result.get("stations"), "slices": len(result.get("slices") or []) or None,
+                    "boundaries": len(result.get("model", {}).get("boundary_tvd_ft", [])) if result else None,
+                    "misfit_normalised": result.get("misfit_normalised"),
+                    "rms_percent_used": result.get("rms_percent_used"),
+                    "forward_evaluations": result.get("forward_evaluations"), "elapsed_s": result.get("elapsed_s")}
+    out["stores"] = list(stores or [])
+    return out
+
+
 def without_result(record: dict) -> dict:
     out = {k: v for k, v in record.items() if k != "result"}
     out.setdefault("summary", summary_of(record))
@@ -65,6 +80,7 @@ class InversionStore(Protocol):
     def delete(self, fingerprint: str, run: str | None = None) -> None: ...
     def older_versions(self, run: str, request_key: str, version: str) -> list[str]: ...
     def list_finished(self, run: str) -> list[dict]: ...
+    def list_all(self) -> list[dict]: ...
     def all_records(self) -> list[dict]: ...
     def count_stations(self, run: str) -> int: ...
     def ping(self) -> None: ...
@@ -123,6 +139,11 @@ class MemoryStore:
     def all_records(self):
         with self._lock:
             return [copy.deepcopy(r) for r in self._records.values()]
+
+    def list_all(self):
+        """Every record of every run, superseded ones included, as ``overview_of`` entries."""
+        with self._lock:
+            return [overview_of(r, [self.kind]) for r in self._records.values()]
 
     def count_stations(self, run):
         with self._lock:
@@ -255,6 +276,18 @@ class DualStore:
         remote = self._read("all_records")
         return remote if remote is not None else self.snapshot.all_records()
 
+    def list_all(self):
+        """Snapshot entries (full stats) merged with a light Cosmos listing; ``stores`` says where each one lives.
+        A record only in Cosmos (computed by another backend since the last sync) has no misfit stats here."""
+        entries = {e["fingerprint"]: e for e in self.snapshot.list_all()}
+        for e in self._read("list_all") or []:
+            mine = entries.get(e["fingerprint"])
+            if mine is None:
+                entries[e["fingerprint"]] = e
+            else:
+                mine["stores"] = ["cosmos", "snapshot"]
+        return list(entries.values())
+
     def count_stations(self, run):
         n = self._read("count_stations", run)
         return n if n is not None else self.snapshot.count_stations(run)
@@ -283,7 +316,7 @@ class DualStore:
         return self._both("save", record)
 
     def delete(self, fingerprint, run=None):
-        self._both("delete", fingerprint, run)
+        return self._both("delete", fingerprint, run)
 
     # --- startup sync --------------------------------------------------------------------------------------
 

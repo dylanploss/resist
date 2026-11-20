@@ -12,6 +12,7 @@ const QcPage = lazy(() => import('./pages/QcPage.jsx'))
 const Well3dPage = lazy(() => import('./pages/Well3dPage.jsx'))
 const InversionPage = lazy(() => import('./pages/InversionPage.jsx'))
 const FacetInversionPage = lazy(() => import('./pages/FacetInversionPage.jsx'))
+const InversionManagerPage = lazy(() => import('./pages/InversionManagerPage.jsx'))
 
 const theme = createTheme({ palette: { primary: { main: '#2a78d6' } } })
 
@@ -23,6 +24,7 @@ const PAGES = [
   { id: 'inversion', label: 'Inversion 1D/1.5D' },
   { id: 'inversion3d', label: 'Inversion 3D facets' },
   { id: 'udar', label: 'Modelling (UDAR)' },
+  { id: 'manage', label: 'Inversion management' },
 ]
 
 // ?tab=3d&run=<run>&curve=<curve> opens a page directly, so a 3D view can be bookmarked.
@@ -51,12 +53,21 @@ function App() {
   const [run, setRun] = useState(initial.run)
   const [curve, setCurve] = useState(initial.curve)
   const [qcSelections, setQcSelections] = useState({})
+  // A stored inversion to show on the Inversion tab (from the management page); seq makes repeat clicks count.
+  const [openRequest, setOpenRequest] = useState(null)
   const runs = useApi(getRuns, 'runs')
 
   const openPage = useCallback((v) => {
     setPage(v)
     setOpened((o) => (o[v] ? o : { ...o, [v]: true }))
   }, [])
+
+  const openInversion = useCallback((r, jobId) => {
+    setRun(r)
+    setOpenRequest((o) => ({ run: r, jobId, seq: (o?.seq ?? 0) + 1 }))
+    openPage('inversion')
+    window.scrollTo({ top: 0 })
+  }, [openPage])
 
   const onSelectionChange = useCallback(
     (r, curves) => setQcSelections((s) => (s[r] === curves ? s : { ...s, [r]: curves })), [])
@@ -118,7 +129,7 @@ function App() {
             {opened.inversion && (
               <Suspense fallback={<LinearProgress />}>
                 <InversionPage runs={runs} run={run} onRunChange={setRun} liveSelection={qcSelections[run]}
-                  onOpenQc={() => openPage('qc')} />
+                  onOpenQc={() => openPage('qc')} openRequest={openRequest} />
               </Suspense>
             )}
           </Box>
@@ -134,6 +145,13 @@ function App() {
             {opened.udar && (
               <Suspense fallback={<LinearProgress />}>
                 <ModellingPage />
+              </Suspense>
+            )}
+          </Box>
+          <Box hidden={page !== 'manage'}>
+            {opened.manage && (
+              <Suspense fallback={<LinearProgress />}>
+                <InversionManagerPage active={page === 'manage'} onOpen={openInversion} />
               </Suspense>
             )}
           </Box>

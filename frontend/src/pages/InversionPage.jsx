@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useState } from 'react'
 import {
   Alert, Box, Button, Checkbox, Chip, CircularProgress, FormControl, FormControlLabel, IconButton, InputLabel, LinearProgress,
   MenuItem, Paper, Select, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton,
@@ -223,7 +223,7 @@ function DipLinesCard({ lines, onLinesChange, options, onOptionsChange, path, pa
   )
 }
 
-function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
+function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc, openRequest }) {
   const qcCurves = useQcCurves(run, liveSelection)
   const defaults = useApi(() => getInversionDefaults(run), run || null)
   const [settingsByRun, setSettingsByRun] = useState({})
@@ -329,6 +329,15 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
     }).catch((e) => setSubmitError(`Could not load inversion ${id}: ${e.message}`))
       .finally(() => setLoading(null))
   }
+
+  // "Open" on the Inversion management page: load that stored inversion here (the app has already switched the run).
+  const openFromManager = useEffectEvent((id) => loadInversion(id))
+  useEffect(() => {
+    if (!openRequest?.jobId) return undefined
+    let cancelled = false
+    queueMicrotask(() => !cancelled && openFromManager(openRequest.jobId))
+    return () => { cancelled = true }
+  }, [openRequest])
 
   useEffect(() => {
     if (!jobId || !jobActive) return undefined
@@ -468,7 +477,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                     {[1, 2, 3, 4].map((k) => <MenuItem key={k} value={k}>{k}</MenuItem>)}
                   </Select>
                 </FormControl>
-                <Tooltip title="Phase weight 1; 2 MHz attenuation weight 0.5 with the Z-20 resistivity-dependent correction; 500/125 kHz attenuation weight 0.25">
+                <Tooltip title="On: phase weight 1, 2 MHz attenuation weight 0.5, 500/125 kHz attenuation weight 0 (shown for QC only). Off: all attenuation at weight 1. The dielectric effect is in the forward model either way">
                   <FormControlLabel sx={{ gridColumn: '1 / -1' }} control={
                     <Switch checked={settings.calibration} onChange={(e) => update({ calibration: e.target.checked })} />}
                     label="Tool calibration (Z-20)" />

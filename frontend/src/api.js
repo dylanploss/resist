@@ -111,3 +111,9 @@ export function groupLabel(row) {
   if (row.family === 'conventional') return 'Other logs'
   return `${row.family === 'ZG' ? 'Geosignal' : 'Resistivity'} · ${row.spacing_in} in`
 }
+
+// Every stored inversion of every run, without result arrays (Inversion management page).
+export const getInversionRecords = () => request('/inversion/records')
+
+export const deleteInversionRecord = (fingerprint, run) =>
+  request(`/inversion/records/${encodeURIComponent(fingerprint)}?run=${encodeURIComponent(run)}`, { method: 'DELETE' })

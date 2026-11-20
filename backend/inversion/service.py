@@ -409,6 +409,32 @@ def save_result(job: Job) -> str:
     return "; ".join(parts)
 
 
+def stored_records() -> list[dict]:
+    """Every stored inversion, superseded versions included, without result arrays (``store.overview_of``)."""
+    return _store().list_all()
+
+
+def delete_record(fingerprint: str, run: str | None = None) -> dict:
+    """Delete a stored inversion from the store (Cosmos and snapshot) and from this backend's finished jobs.
+
+    Raises LookupError when the store has no such inversion and ValueError while it is being computed. A record it
+    superseded stays superseded. Another backend whose snapshot still holds the record pushes it back to Cosmos on
+    its next start (``DualStore.sync``)."""
+    with _jobs_lock:
+        if any(j.fingerprint == fingerprint and j.status in ("queued", "running") for j in _jobs.values()):
+            raise ValueError("this inversion is being computed; wait for it to finish")
+    st = _store()
+    entry = next((e for e in st.list_all() if e["fingerprint"] == fingerprint), None)
+    if entry is None or (run is not None and entry["run"] != run):
+        raise LookupError(f"no stored inversion {fingerprint[:12]}")
+    info = st.delete(fingerprint, entry["run"]) or {}
+    with _jobs_lock:
+        for job_id in [i for i, j in _jobs.items() if j.fingerprint == fingerprint]:
+            del _jobs[job_id]
+    log.info("deleted inversion %s of %s", fingerprint[:12], entry["run"])
+    return {"deleted": fingerprint, "job_id": entry["job_id"], "run": entry["run"], "warning": info.get("warning")}
+
+
 def _execute(job: Job, run) -> None:
     with _slot:
         job.status, job.started, job.message = "running", time.time(), "loading interval"

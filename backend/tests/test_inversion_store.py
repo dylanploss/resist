@@ -106,6 +106,22 @@ class MemoryStoreContract(StoreContract, unittest.TestCase):
     def setUp(self):
         self.store, self.run = store.MemoryStore(), "runA"
 
+    def test_list_all_covers_every_run_and_superseded_versions_with_stats(self):
+        old = make_record(self.run, version="1", finished=100.0)
+        self.store.save(old)
+        self.store.save(make_record(self.run, version="2", finished=200.0, supersedes=[old["fingerprint"]]))
+        self.store.save(make_record("runB", request_key="other"))
+        listed = {e["fingerprint"]: e for e in self.store.list_all()}
+        self.assertEqual(len(listed), 3)
+        entry = listed[old["fingerprint"]]
+        self.assertTrue(entry["superseded"])
+        self.assertNotIn("result", entry)
+        self.assertEqual((entry["well"], entry["stores"]), ("W-1", ["memory"]))
+        self.assertEqual(entry["stats"], {"stations": 10, "slices": None, "boundaries": 1, "misfit_normalised": 1.0,
+                                          "rms_percent_used": 1.0, "forward_evaluations": 3, "elapsed_s": 1.0})
+        entry["request"]["layers"] = 99                               # a copy: the store is not touched
+        self.assertEqual(self.store.find(old["fingerprint"])["request"]["layers"], 2)
+
 
 class SnapshotStoreContract(StoreContract, unittest.TestCase):
     def setUp(self):
@@ -143,7 +159,7 @@ class FakeCosmos(store.MemoryStore):
 
     def __getattribute__(self, name):
         if name in ("find", "get", "save", "delete", "list_finished", "older_versions", "count_stations",
-                    "fingerprints", "ping", "all_records") and object.__getattribute__(self, "fail"):
+                    "fingerprints", "ping", "all_records", "list_all") and object.__getattribute__(self, "fail"):
             raise ConnectionError("cosmos down")
         return object.__getattribute__(self, name)
 
@@ -173,6 +189,17 @@ class DualStoreContract(StoreContract, unittest.TestCase):
         self.path = Path(tmp.name) / "inversions.json"
         self.cosmos = FakeCosmos()
         self.store, self.run = store.DualStore(self.cosmos, store.SnapshotStore(self.path), read_timeout_s=0.5), "runA"
+
+    def test_list_all_says_where_each_record_lives(self):
+        both, local, remote = (make_record(self.run, request_key=k) for k in "abc")
+        self.store.save(both)
+        self.store.snapshot.save(local)
+        self.cosmos.save(remote)
+        stores = {e["fingerprint"]: e["stores"] for e in self.store.list_all()}
+        self.assertEqual(stores, {both["fingerprint"]: ["cosmos", "snapshot"], local["fingerprint"]: ["snapshot"],
+                                  remote["fingerprint"]: ["cosmos"]})
+        self.cosmos.fail = True                                       # Cosmos down: the snapshot still lists
+        self.assertEqual({e["fingerprint"] for e in self.store.list_all()}, {both["fingerprint"], local["fingerprint"]})
 
     def test_reads_prefer_cosmos(self):
         rec = make_record(self.run)
@@ -471,6 +498,40 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((st["store"], st["cosmos"]), ("snapshot", "unavailable"))
         self.assertIn("not logged in", st["reason"])
         self.assertIn("az login --tenant 704b7209-73fa-43f5-8e84-21cd65fe5697 --use-device-code", logs.output[0])
+
+    def test_records_are_listed_by_well_and_deleted(self):
+        st = store.MemoryStore()
+        store.set_store(st)
+        self.addCleanup(store.set_store, None)
+        old = make_record("runZ", version="1", finished=100.0)
+        new = make_record("runZ", version=service.INVERSION_VERSION, finished=200.0, supersedes=[old["fingerprint"]])
+        st.save(old)
+        st.save(new)
+        client = TestClient(app)
+        body = client.get("/inversion/records").json()
+        self.assertEqual(body["version"], service.INVERSION_VERSION)
+        listed = {r["fingerprint"]: r for r in body["records"]}
+        self.assertEqual(set(listed), {old["fingerprint"], new["fingerprint"]})
+        entry = listed[new["fingerprint"]]
+        self.assertEqual((entry["well"], entry["current_version"], entry["run_available"]), ("W-1", True, False))
+        self.assertEqual(entry["stats"]["misfit_normalised"], 1.0)
+        self.assertFalse(listed[old["fingerprint"]]["current_version"])
+        self.assertNotIn("result", entry)
+
+        self.assertEqual(client.delete("/inversion/records/" + "0" * 64).status_code, 404)
+        self.assertEqual(client.delete(f"/inversion/records/{new['fingerprint']}", params={"run": "other"}).status_code, 404)
+        busy = service.Job(new["job_id"], "runZ", {}, {}, status="running", fingerprint=new["fingerprint"])
+        service._jobs[busy.id] = busy
+        self.addCleanup(service._jobs.pop, busy.id, None)
+        self.assertEqual(client.delete(f"/inversion/records/{new['fingerprint']}").status_code, 409)
+        busy.status = "done"
+        gone = client.delete(f"/inversion/records/{new['fingerprint']}", params={"run": "runZ"})
+        self.assertEqual((gone.status_code, gone.json()["job_id"]), (200, new["job_id"]))
+        self.assertNotIn(busy.id, service._jobs)                       # no longer served from memory either
+        self.assertIsNone(st.find(new["fingerprint"]))
+        left = client.get("/inversion/records").json()["records"]
+        self.assertEqual([r["fingerprint"] for r in left], [old["fingerprint"]])
+        self.assertTrue(left[0]["superseded"])                         # the version it replaced stays superseded
 
     def test_force_field_accepted(self):
         from backend.inversion.api import InversionRequest

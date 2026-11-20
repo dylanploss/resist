@@ -1,5 +1,9 @@
 # Inversion hackathon plan (2 days) and Z-20 misfit result
 
+> **Historical.** This is the plan and the Z-20 study from the hackathon. The inversion as implemented today is
+> described in [INVERSION_REFERENCE.md](INVERSION_REFERENCE.md). In particular, the `Z20_ATTENUATION_CORRECTION`
+> table below was replaced by a dielectric forward model in inversion version 5.
+
 This replaces the six-week schedule in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the hackathon.
 The physics choices in [ADR_1D5_strategy.md](ADR_1D5_strategy.md) still hold. The change is that we
 **calibrate the algorithm to the tool** instead of trusting textbook EM theory for every curve.

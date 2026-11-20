@@ -352,6 +352,27 @@ class CosmosStore:
             out.append(rec)
         return sorted(out, key=lambda r: r.get("finished") or 0, reverse=True)
 
+    def list_all(self, include_test: bool = False):
+        """Light listing of every complete inversion (no fit edges, no result): ``store.overview_of`` shape with only
+        the station and boundary counts as stats."""
+        rows = self.query("g.V().hasLabel('inversion').has('complete', true)"
+                          ".valueMap('fingerprint', 'job_id', 'run', 'version', 'request_key', 'request', 'plan',"
+                          " 'created', 'started', 'finished', 'supersedes', 'superseded', 'complete', 'stations',"
+                          " 'boundaries')")
+        out = []
+        for vm in rows:
+            rec = self._vertex_record(vm)
+            if not include_test and str(rec["run"]).startswith("test|"):
+                continue
+            summary = rec.pop("summary")
+            for k in ("_meta", "complete"):
+                rec.pop(k, None)
+            out.append({**rec, "well": None, "stores": ["cosmos"],
+                        "stats": {"stations": summary.get("stations"), "slices": None,
+                                  "boundaries": summary.get("boundaries"), "misfit_normalised": None,
+                                  "rms_percent_used": None, "forward_evaluations": None, "elapsed_s": None}})
+        return out
+
     def all_records(self, include_test: bool = False):
         rows = self.query("g.V().hasLabel('inversion').has('complete', true).project('f', 'r')"
                           ".by('fingerprint').by('run')")

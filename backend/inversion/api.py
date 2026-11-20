@@ -118,6 +118,32 @@ def finished_jobs(run: str) -> dict:
     return {"run": run, "jobs": [layers.job_summary(j) for j in service.finished_jobs(run)]}
 
 
+@router.get("/records")
+def records() -> dict:
+    """Every stored inversion of every run (superseded versions included) with its request, used channels and key
+    stats, for the Inversion management page. No result arrays."""
+    wells = {r["run"]: r.get("well") for r in runs.list_runs()}
+    entries = service.stored_records()
+    for e in entries:
+        e["well"] = e.get("well") or wells.get(e["run"]) or "unknown"
+        e["run_available"] = e["run"] in wells
+        e["current_version"] = e.get("version") == service.INVERSION_VERSION
+    entries.sort(key=lambda e: (e["well"], e["run"], e["request"].get("md_min_ft", 0), -(e.get("finished") or 0)))
+    from backend.inversion import store
+    return {"version": service.INVERSION_VERSION, "store": store.status(), "records": entries}
+
+
+@router.delete("/records/{fingerprint}")
+def delete_record(fingerprint: str, run: str | None = None) -> dict:
+    """Delete one stored inversion (Cosmos graph and snapshot). 404 when unknown, 409 while it is computing."""
+    try:
+        return service.delete_record(fingerprint, run)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str) -> dict:
     job = service.get(job_id)

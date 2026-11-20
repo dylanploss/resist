@@ -3,7 +3,7 @@
 Resistivity QC and inversion platform for the Ekofisk well data.
 
 - **Backend:** Python, FastAPI (`backend/`). Health, run list, curve inventory, curve data, QC selection and 3D well path endpoints on the real Ekofisk data.
-- **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`). Pages: Overview (backend health, runs), Data (curve inventory and curves vs depth), QC selection (ranked table, DOI-noise scatter, depth tracks, saved selections), 3D well (one curve along the real well path with a DOI-sized tube, compare, inversion layers, field view, demo and PNG export; see [3D well tab](#3d-well-tab)), and Modelling (UDAR), which runs the UDAR_Bench 1D forward model and inversion in the browser.
+- **Frontend:** JavaScript, Vite, React, Material UI (`frontend/`). Pages: Overview (backend health, runs), Data (curve inventory and curves vs depth), QC selection (ranked table, DOI-noise scatter, depth tracks, saved selections), 3D well (one curve along the real well path with a DOI-sized tube, compare, inversion layers, field view, demo and PNG export; see [3D well tab](#3d-well-tab)), Modelling (UDAR), which runs the UDAR_Bench 1D forward model and inversion in the browser, and Inversion management (every stored inversion by well with its curves and statistics; delete).
 - **Data:** Ekofisk DLIS files in `data/`, with the reference notebook `view_resistivity_data_ekofisk.ipynb`.
 - **UDAR_Bench:** David's standalone browser example for 1D and 2.5D forward modeling and inversion (`UDAR_Bench/`). The single-file `UDAR_Bench.html` is not in the repo; build it with `node build/build.js` in `UDAR_Bench/source/` and open `UDAR_Bench/source/build/udar.html` in Chrome. The frontend uses an unchanged copy of its compute core (`frontend/src/compute/udar/`).
 
@@ -53,7 +53,7 @@ The **3D well** tab draws one QC curve along the real well path (UTMX/UTMY + TVD
 | **★ Demo** | Scripted fly-through with captions at the most resistive and most conductive zone, the largest DOI spread (image curves) and TD; **Stop demo** or Escape ends it |
 | **Save PNG** | Downloads `<run>_<curve>_<md>ft.png` of the 3D canvas; `window.__well3dSnapshot()` returns the same image as a data URL |
 
-Inversion jobs live in backend memory, so run an inversion after each backend restart before turning on the layers. The DOI is an estimate, not a vendor figure; see [docs/plans/well-3d-view.md](docs/plans/well-3d-view.md) for the assumptions.
+Finished inversions are kept in the inversion store, so the layers of earlier jobs are available after a backend restart. The DOI is an estimate, not a vendor figure; see [docs/plans/well-3d-view.md](docs/plans/well-3d-view.md) for the assumptions.
 
 ![Compare with: ARH16P inner tube inside the ZRL48A shell on Z-19](docs/screenshots/well3d-compare.png)
 
@@ -65,6 +65,7 @@ Inversion jobs live in backend memory, so run an inversion after each backend re
 - [docs/api/contract.md](docs/api/contract.md): curve table, QC JSON, and endpoints.
 - [docs/data/ekofisk-format.md](docs/data/ekofisk-format.md): Ekofisk data format and analysis CLI.
 - [docs/plans/resist-platform-dev-plan.md](docs/plans/resist-platform-dev-plan.md): work plan and workstream owners.
+- [docs/inversion/INVERSION_REFERENCE.md](docs/inversion/INVERSION_REFERENCE.md): **the inversion as implemented**: architecture, forward model, optimiser, quick/full evaluation budgets, uncertainty and the fade slider, dip lines, storage, limits.
 - [docs/inversion/ADR_1D5_strategy.md](docs/inversion/ADR_1D5_strategy.md): detailed forward model, inversion, and validation strategy.
 - [docs/inversion/IMPLEMENTATION_PLAN.md](docs/inversion/IMPLEMENTATION_PLAN.md): 6-week implementation roadmap with 5 workstreams.
 - [docs/inversion/RESEARCH_SUMMARY.md](docs/inversion/RESEARCH_SUMMARY.md): executive summary of inversion research findings.

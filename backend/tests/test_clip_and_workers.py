@@ -149,9 +149,10 @@ class WorkerPoolTests(unittest.TestCase):
         pool = worker_pool(traj, 2)
         self.assertEqual(pool.submit(_worker_env).result(timeout=120), {"OPENBLAS_NUM_THREADS": "1",
                                                                        "VECLIB_MAXIMUM_THREADS": "1"})
-        procs = list(pool._processes.values())
+        pids = list(pool._processes)
         self.assertGreaterEqual(shutdown_pools(), 1)
-        self.assertTrue(all(not p.is_alive() for p in procs))
+        # By pid: Process.is_alive() can still say True for a moment while the pool's own thread reaps the worker.
+        self.assertEqual([p for p in pids if _alive(p)], [])
         self.assertEqual(shutdown_pools(), 0)
 
     def test_workers_exit_when_the_parent_is_killed(self):
