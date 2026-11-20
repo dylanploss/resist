@@ -164,6 +164,9 @@ class FitConfig:
     curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
     level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
     max_nfev: int = 25
+    # Interpreter constraints (dip lines drawn on the section): Gaussian priors appended to the residual.
+    dip_prior: tuple | None = None     # (dip deg, sigma deg) on the along-well dip
+    boundary_priors: tuple = ()        # ((boundary ft relative to the reference, sigma ft), ...) on the nearest boundary
 
 
 @dataclass
@@ -184,6 +187,33 @@ class Layout:
     @property
     def n_params(self):
         return self.n_earth + (self.n_curves if self.cfg.fit_bias else 0)
+
+    @property
+    def dip_index(self):
+        return (self.cfg.n_layers - 1) + self.cfg.n_layers + self.n_aniso
+
+    def prior_rows(self, x):
+        """Constraint residuals and their Jacobian rows: the dip prior, then each boundary prior on the nearest
+        boundary not yet claimed by another prior."""
+        cfg, k = self.cfg, self.cfg.n_layers
+        rows, jac = [], []
+        if cfg.dip_prior is not None and cfg.fit_dip:
+            d0, s = cfg.dip_prior
+            rows.append((x[self.dip_index] - d0) / s)
+            g = np.zeros(self.n_params); g[self.dip_index] = 1.0 / s
+            jac.append(g)
+        if cfg.boundary_priors and k > 1:
+            bounds = np.cumsum(x[:k - 1])
+            free = list(range(k - 1))
+            for b0, s in cfg.boundary_priors:
+                if not free:
+                    break
+                j = min(free, key=lambda i: abs(bounds[i] - b0))
+                free.remove(j)
+                rows.append((bounds[j] - b0) / s)
+                g = np.zeros(self.n_params); g[:j + 1] = 1.0 / s
+                jac.append(g)
+        return np.array(rows, float), (np.array(jac) if jac else np.zeros((0, self.n_params)))
 
     def model(self, x):
         k = self.cfg.n_layers
@@ -341,12 +371,13 @@ class Inverter:
         # poison the fit.
         diff = (self._corrected(theory) + self.lay.bias(x) - self.data.obs) * self.w
         r = np.where(self.w > 0, diff, 0.0).ravel()
+        prior = self.lay.prior_rows(x)[0]
         if not self.cfg.fit_bias:
-            return r
+            return np.concatenate([r, prior])
         b = self.lay.bias(x)
-        prior = b / self.cfg.bias_prior
+        bias_prior = b / self.cfg.bias_prior
         ref = np.array([b[self.ref_idx].sum() * 100.0])
-        return np.concatenate([r, prior, ref])
+        return np.concatenate([r, bias_prior, ref, prior])
 
     def fun(self, x):
         r = self._resid(x, self._theory_batch([x])[0])
@@ -370,7 +401,10 @@ class Inverter:
             nb = self.lay.n_curves
             J[:n * m, ne:] = np.tile(np.diag(self.w), (n, 1))
             J[n * m:n * m + nb, ne:] = np.eye(nb) / self.cfg.bias_prior
-            J[-1, ne + self.ref_idx] = 100.0
+            J[n * m + nb, ne + self.ref_idx] = 100.0
+        prior_jac = self.lay.prior_rows(x)[1]
+        if len(prior_jac):
+            J[-len(prior_jac):] = prior_jac
         return J
 
     def check_start(self, x0):
@@ -401,7 +435,7 @@ class Inverter:
         bias = self.lay.bias(sol.x)
         pred = self._corrected(theory) + bias
         return FitResult(sol.x, self.lay.model(sol.x), bias, pred, theory, self.data.obs - pred,
-                         self.data.labels, float(sol.cost), int(sol.nfev))
+                         self.data.labels, float(sol.cost), int(sol.nfev), {"jac": np.asarray(sol.jac)})
 
     def multistart(self, starts):
         """Best fit over the starts; a start that cannot be evaluated is skipped, not fatal."""

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Box, FormControl, FormControlLabel, InputLabel, MenuItem, Select, Switch, Tooltip, Typography } from '@mui/material'
+import { Box, FormControl, FormControlLabel, InputLabel, MenuItem, Select, Slider, Switch, Tooltip, Typography } from '@mui/material'
 import { boundaryColor, layerColorSpec, nearestReading, rgbCss } from './inversionLayers.js'
 import { nearestIndex } from './path.js'
 
@@ -35,6 +35,29 @@ export function LayersControl({ inv, curveSpec }) {
         </Tooltip>
       ))}
       {inv.error && <Typography variant="caption" color="error">{inv.error}</Typography>}
+      {inv.layers?.slices?.length > 0 && (
+        <>
+          <Tooltip title="The inverted curtain section draped along the well (each slice's own model)">
+            <FormControlLabel sx={{ mr: 0, ml: 1 }} label="Curtain"
+              control={<Switch size="small" checked={inv.curtain.show}
+                onChange={(e) => inv.setCurtain({ ...inv.curtain, show: e.target.checked })} />} />
+          </Tooltip>
+          <FormControl size="small" sx={{ minWidth: 90 }} disabled={!inv.curtain.show}>
+            <InputLabel id="well3d-curtain-h">± TVD</InputLabel>
+            <Select labelId="well3d-curtain-h" label="± TVD" value={inv.curtain.halfFt}
+              onChange={(e) => inv.setCurtain({ ...inv.curtain, halfFt: Number(e.target.value) })}>
+              {[5, 10, 15, 25, 40].map((v) => <MenuItem key={v} value={v}>{v} ft</MenuItem>)}
+            </Select>
+          </FormControl>
+          <Tooltip title="Fade the curtain: the most uncertain layers disappear first">
+            <Box sx={{ width: 110, display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="caption">Fade</Typography>
+              <Slider size="small" disabled={!inv.curtain.show} value={Math.round(inv.curtain.fade * 100)} min={0} max={100}
+                aria-label="Fade uncertain curtain" onChange={(_, v) => inv.setCurtain({ ...inv.curtain, fade: v / 100 })} />
+            </Box>
+          </Tooltip>
+        </>
+      )}
     </Box>
   )
 }

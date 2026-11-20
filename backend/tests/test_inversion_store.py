@@ -174,7 +174,7 @@ class ServiceFlowTests(unittest.TestCase):
         self.calls = []
         done = threading.Event()
 
-        def fake_run_inversion(run, request, plan, job=None):
+        def fake_run_inversion(run, request, plan, job=None, base=None):
             self.calls.append(request)
             n = int((request["md_max_ft"] - request["md_min_ft"]) // request["step_ft"]) + 1
             return make_result(md_min=request["md_min_ft"], n=n, step=request["step_ft"])
@@ -281,6 +281,26 @@ class ServiceFlowTests(unittest.TestCase):
         got = service.get(job.id)
         self.assertEqual((got.source, got.status), ("graph", "done"))
         self.assertEqual([j.id for j in service.finished_jobs("runF")], [job.id])
+
+    LINE = {"md1_ft": 1004.0, "tvd1_ft": 500.0, "md2_ft": 1030.0, "tvd2_ft": 503.0}
+
+    def test_dip_lines_change_the_fingerprint_only_when_present(self):
+        plan = {"used": [{"label": "ARH16P", "weight": 1.0}]}
+        base = service.fingerprint("r", self.request(), plan)
+        self.assertEqual(service.fingerprint("r", {**self.request(), "lines": [], "dip_sigma_deg": 5.0}, plan), base)
+        lined = service.fingerprint("r", {**self.request(), "lines": [self.LINE]}, plan)
+        self.assertNotEqual(lined[0], base[0])
+        wider = service.fingerprint("r", {**self.request(), "lines": [self.LINE], "dip_sigma_deg": 5.0}, plan)
+        self.assertNotEqual(wider[0], lined[0])
+
+    def test_partial_rerun_needs_a_matching_base_with_slices(self):
+        first = self.run_job(self.request())
+        with self.assertRaisesRegex(ValueError, "md_max_ft"):
+            service.submit("runF", self.run, {**self.request(hi=1040.0), "lines": [self.LINE], "base_job_id": first.id})
+        with self.assertRaisesRegex(ValueError, "no slices"):
+            service.submit("runF", self.run, {**self.request(), "lines": [self.LINE], "base_job_id": first.id})
+        with self.assertRaisesRegex(ValueError, "not a finished"):
+            service.submit("runF", self.run, {**self.request(), "lines": [self.LINE], "base_job_id": "nope"})
 
 
 class ApiTests(unittest.TestCase):

@@ -32,10 +32,12 @@ export function useInversionLayers(run, active) {
   const [pick, setPick] = useState({ run: null, id: null })
   const id = pick.run === run && jobs.some((j) => j.id === pick.id) ? pick.id : jobs[0]?.id ?? null
   const [show, setShow] = useState(true)
+  // The inverted section draped along the well; fade hides the most uncertain cells first.
+  const [curtain, setCurtain] = useState({ show: true, fade: 0, halfFt: 15, opacity: 0.85 })
   const geometry = useApi(() => api(`/inversion/jobs/${encodeURIComponent(id)}/layers`),
     id && show ? `inversion-layers|${id}` : null)
   return {
-    jobs, id, show, setShow,
+    jobs, id, show, setShow, curtain, setCurtain,
     setId: (value) => setPick({ run, id: value }),
     ready: list.run === run,
     layers: show ? geometry.data : null,

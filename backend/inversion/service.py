@@ -7,9 +7,10 @@ The QC page picks curves; this module maps them onto the 1.5D forward model (``b
   sectors (``backend.data.quadrants``) for every run, so data and forward model use the same definition. Selecting
   ``ZR..T``/``ZR..B`` directly uses the image sector when the image exists, else the delivered curve. These carry the
   up/down information that places boundaries above or below the well.
-* A ``ZG`` geosignal image contributes its **top** quadrant sector (phase in deg, attenuation in dB).
-* ``ZR`` 50/66/82 in long-spacing images contribute top/bottom sectors on a **guessed** antenna geometry
-  (``adr_forward.LS_RECEIVER_IN``), at half weight and with a plan warning.
+* A ``ZG`` geosignal image (any spacing 16-112 in, one transmitter into R3) contributes its **top** quadrant sector
+  (phase in deg, attenuation in dB; each bin minus the mean of all bins).
+* ``ZR`` 50/66/82 in long-spacing images contribute top/bottom sectors of T2/T4/T6 into R1 and R3, uncompensated
+  (``adr_forward.R3_IN``; the pairing is inferred), at full weight and with a plan warning.
 * Phase weight 1. With ``calibration`` on, attenuation is down-weighted and 2 MHz attenuation (averaged and
   top/bottom) gets the Z-20 resistivity-dependent correction (docs/inversion/HACKATHON_PLAN.md).
 * Single bins and geosignals are weighted by their own noise, estimated from the data in the interval.
@@ -26,7 +27,7 @@ request is answered from the store (``source: "graph"``) without computing, unle
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 import re
 import threading
@@ -37,7 +38,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from backend.inversion.adr_forward import FT, FREQ_LETTER, LS_RECEIVER_IN, ADRForward
+from backend.inversion.adr_forward import FT, FREQ_LETTER, R3_IN, ADRForward, LayerModel
 from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
                                       default_starts, interval_from_run, noise_estimate, worker_pool)
 
@@ -48,7 +49,7 @@ ZG_CURVE = re.compile(r"^ZG([HML])(\d+)([PA])$")
 FREQ_HZ = {letter: f for f, letter in FREQ_LETTER.items()}
 CALIBRATED_ATTENUATION_WEIGHT = {2e6: 0.5, 5e5: 0.25, 1.25e5: 0.25}
 GEOSIGNAL_WEIGHT = {"ZGL112AT": 0.25}  # 125 kHz attenuation geosignal barely tracks ZR top/bottom (r < 0.16)
-GUESSED_GEOMETRY_WEIGHT = 0.5           # ZR 50/66/82 in: antenna layout guessed, uncompensated
+GUESSED_GEOMETRY_WEIGHT = 1.0           # ZR 50/66/82 in: antenna layout guessed, uncompensated; kept at full weight
 LS_SPACINGS = (50, 66, 82)
 SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
 WORKERS = 6
@@ -61,9 +62,24 @@ MAX_SLICES = 300
 MIN_WINDOW_STATIONS = 3
 # Bump when the inversion code changes its results: repeated requests then recompute and supersede the old ones.
 # "2": quadrant sectors, per-slice sliding-window fits with warm starts, Rh fit bounds.
-INVERSION_VERSION = "2"
+# "3": per-slice posterior uncertainty, 50/66/82 in at full weight, dip-line constraints and partial re-runs.
+# "4": ADR spec geometry: R3 at +64 in for long spacing and geosignals (all 16-112 in), bin-minus-average geosignals.
+INVERSION_VERSION = "4"
 # Request fields that never change the result; every other field of the validated request is fingerprinted.
 NON_RESULT_FIELDS = frozenset({"force"})
+# Fields that only matter with dip lines / a base job; dropped otherwise so plain requests keep their fingerprint.
+LINE_FIELDS = ("lines", "dip_sigma_deg", "boundary_sigma_ft", "downweight_misfit")
+RERUN_FIELDS = ("base_job_id", "rerun_md_min_ft", "rerun_md_max_ft")
+# Dip-line constraints: prior widths, the steepest dip a line may impose, and the misfit re-weighting of curves.
+DEFAULT_DIP_SIGMA_DEG = 2.0
+DEFAULT_BOUNDARY_SIGMA_FT = 2.0
+MAX_LINE_DIP_DEG = 60.0
+DOWNWEIGHT_MIN_CHI = 2.0      # a curve is only down-weighted when its misfit/noise exceeds this ...
+DOWNWEIGHT_REL_CHI = 1.5      # ... and this multiple of the median curve misfit/noise in the window
+DOWNWEIGHT_FLOOR = 0.05
+UNCERTAINTY_DAMPING = 1e-2    # keeps parameters the data cannot see finite (they come out at ~10 decades, capped)
+MAX_RH_STD_LOG = 2.0
+MAX_BOUNDARY_STD_FT = 50.0
 
 # The 2 MHz attenuation bias is a property of the channel, so it applies to its top/bottom bins too.
 ATTENUATION_CORRECTION = {**Z20_ATTENUATION_CORRECTION,
@@ -151,10 +167,11 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
                         "is poorly constrained.")
     guessed = sorted({e["curve"] for e in entries if e["guessed_geometry"]})
     if guessed:
-        warnings.append(f"Guessed geometry for {', '.join(guessed)}: the 50/66/82 in long-spacing antenna layout is "
-                        f"not confirmed. The model assumes the 16/32/48 in uphole transmitters and a tilted receiver "
-                        f"{LS_RECEIVER_IN:.0f} in downhole of the tool centre, uncompensated. These channels get half "
-                        "weight; check their misfit, and treat boundaries they alone resolve with caution.")
+        warnings.append(f"Guessed geometry for {', '.join(guessed)}: the 50/66/82 in long-spacing pairing is "
+                        f"inferred, not published. The model fires T2/T4/T6 (16/32/48 in uphole) into R1 (near) and R3 "
+                        f"(far, {R3_IN:.0f} in downhole of the tool centre), uncompensated; the spacing is to the R1-R3 "
+                        "midpoint. These channels keep full weight; check their misfit, and treat boundaries they "
+                        "alone resolve with caution.")
     public = [{k: v for k, v in e.items() if k != "_source"} for e in entries]
     return {"used": public, "ignored": ignored, "calibration": calibration, "warnings": warnings,
             "azimuthal": bool(directional), "_sources": {e["label"]: e["_source"] for e in entries}}
@@ -188,6 +205,7 @@ class Job:
     request_key: str | None = None
     force: bool = False
     summary: dict | None = None        # listing info when the result is not loaded
+    base: dict | None = None           # result of the base job a partial re-run copies its untouched slices from
 
     def to_dict(self) -> dict:
         end = self.finished or time.time()
@@ -216,6 +234,12 @@ def canonical_request(run_id: str, request: dict) -> dict:
     from backend.inversion.api import InversionRequest   # api imports this module
     body = InversionRequest(**{**request, "run": run_id}).model_dump(exclude=set(NON_RESULT_FIELDS))
     body["curves"] = sorted(body["curves"])
+    if not body["lines"]:
+        for key in LINE_FIELDS:
+            body.pop(key)
+    if body["base_job_id"] is None:
+        for key in RERUN_FIELDS:
+            body.pop(key)
     return body
 
 
@@ -255,6 +279,7 @@ def submit(run_id: str, run, request: dict, force: bool = False) -> Job:
         raise ValueError("none of the selected curves can be inverted; select AR, ZR (16/32/48 in) or ZG curves in QC")
     fp, request_key = fingerprint(run_id, request, plan)
     job_id = fp[:12]
+    base = _base_result(run_id, request) if request.get("base_job_id") else None
     with _jobs_lock:
         active = _jobs.get(job_id)
         if active is not None and active.status in ("queued", "running"):
@@ -267,11 +292,30 @@ def submit(run_id: str, run, request: dict, force: bool = False) -> Job:
             log.warning("inversion store lookup failed: %s", type(exc).__name__)
         if rec is not None:
             return job_from_record(rec)
-    job = Job(job_id, run_id, request, plan, fingerprint=fp, request_key=request_key, force=force)
+    job = Job(job_id, run_id, request, plan, fingerprint=fp, request_key=request_key, force=force, base=base)
     with _jobs_lock:
         _jobs[job.id] = job
     threading.Thread(target=_execute, args=(job, run), daemon=True).start()
     return job
+
+
+# A partial re-run reuses the base job's stations and slices, so it must share every setting that places them.
+RERUN_MATCH = ("md_min_ft", "md_max_ft", "step_ft", "layers", "slice_ft", "window_ft")
+
+
+def _base_result(run_id: str, request: dict) -> dict:
+    base = get(request["base_job_id"])
+    if base is None or base.status != "done" or base.result is None:
+        raise ValueError(f"base inversion {request['base_job_id']} is not a finished inversion")
+    if base.run != run_id:
+        raise ValueError("the base inversion belongs to another run")
+    mine, theirs = canonical_request(run_id, request), canonical_request(run_id, base.request)
+    differ = [k for k in RERUN_MATCH if float(theirs[k]) != float(mine[k])]
+    if differ:
+        raise ValueError(f"the base inversion differs in {', '.join(differ)}: run a full inversion instead")
+    if not base.result.get("slices"):
+        raise ValueError("the base inversion has no slices to keep")
+    return base.result
 
 
 def get(job_id: str) -> Job | None:
@@ -322,11 +366,13 @@ def _execute(job: Job, run) -> None:
     with _slot:
         job.status, job.started, job.message = "running", time.time(), "loading interval"
         try:
-            job.result = run_inversion(run, job.request, job.plan, job)
+            job.result = run_inversion(run, job.request, job.plan, job, base=job.base)
         except Exception as exc:  # reported to the client, not raised in the thread
             job.status, job.error, job.message = "error", f"{type(exc).__name__}: {exc}", "failed"
             job.finished = time.time()
             return
+        finally:
+            job.base = None
         job.finished = time.time()
         job.progress, job.message = 0.99, "saving to the inversion store"
         try:
@@ -338,7 +384,7 @@ def _execute(job: Job, run) -> None:
         job.message = "finished" + (f"; {note}" if note else "")
 
 
-def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dict:
+def run_inversion(run, request: dict, plan: dict, job: Job | None = None, base: dict | None = None) -> dict:
     azimuthal = plan["azimuthal"]
     fwd = ADRForward(azimuthal=azimuthal)
     labels = fwd.channel_labels()
@@ -361,7 +407,6 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
     if len(centres) > MAX_SLICES:
         raise ValueError(f"{len(centres)} slices exceed {MAX_SLICES}; shorten the interval or widen the slices")
     nfev = 6 if request["quick"] else 12
-    budget = len(centres) * nfev + 2 * nfev
     count, current = [0], [0]
     well_path = {"md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
                  "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1))))}
@@ -376,17 +421,39 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
     cfg = FitConfig(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal,
                     rh_min=request.get("rh_min_ohmm", 0.1), rh_max=request.get("rh_max_ohmm", 1000.0),
                     max_nfev=nfev)
+    lines = request.get("lines") or []
+    dip_sigma = request.get("dip_sigma_deg", DEFAULT_DIP_SIGMA_DEG)
+    boundary_sigma = request.get("boundary_sigma_ft", DEFAULT_BOUNDARY_SIGMA_FT)
+    downweight = bool(lines) and request.get("downweight_misfit", True)
+    keep, rerun_range = _kept_slices(data, centres, request, base, lines, window_ft)
+    base_pred = _base_pred(data, base, labels) if keep else None
+    budget = max(1, len(centres) - len(keep)) * nfev * (2 if downweight else 1) + 2 * nfev
     pred = np.full(data.obs.shape, np.nan)
     owner = np.argmin(np.abs(data.md_ft[:, None] - centres[None, :]), axis=1)
-    slices, models, x_prev, chi_prev, total_nfev = [], {}, None, np.inf, 0
+    done = dict(keep)
+    if job is not None and keep:
+        job.partial = {**well_path, "slice_ft": slice_ft, "window_ft": window_ft,
+                       "slices": [done[i] for i in sorted(done)], "rerun": rerun_range, "evaluation": 0,
+                       "slice": 0, "n_slices": len(centres), "misfit_normalised": None}
+    models, x_prev, chi_prev, total_nfev, prev_constrained = {}, None, np.inf, 0, False
+    factors: dict[str, list[float]] = {}
     with worker_pool(data.traj, WORKERS, azimuthal=azimuthal) as pool:
         for s, c in enumerate(centres):
             current[0] = s
+            if s in keep:   # partial re-run: this slice is outside the re-run range and is copied from the base
+                models[s] = _model_from_slice(data, keep[s])
+                mine = owner == s
+                pred[mine] = base_pred[mine]
+                x_prev, chi_prev = _x_from_model(models[s]), keep[s].get("misfit_normalised") or np.inf
+                prev_constrained = False
+                continue
             idx = np.flatnonzero(np.abs(data.md_ft - c) <= window_ft / 2 + 1e-6)
             if idx.size < MIN_WINDOW_STATIONS:
                 continue
             sub = data.subset(idx)
-            with Inverter(sub, cfg, on_eval=tick, pool=pool, station_idx=idx) as inv:
+            cons = _slice_constraints(data, sub, lines, c, window_ft, dip_sigma, boundary_sigma, cfg.dip_limit_deg)
+            scfg = replace(cfg, **cons["cfg"]) if cons else cfg
+            with Inverter(sub, scfg, on_eval=tick, pool=pool, station_idx=idx) as inv:
                 res = None
                 if x_prev is not None:
                     try:
@@ -394,29 +461,260 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None) -> dic
                     except ValueError:
                         res = None
                 chi = _chi(res, sigma, labels, w) if res is not None else np.inf
-                # Warm start from the previous slice; restart only when it clearly failed to fit this window.
-                if res is None or chi > 1.5 * chi_prev:
-                    fresh = inv.multistart(default_starts(inv, sub, k, weights=w))
+                # Warm start from the previous slice; restart when it clearly failed to fit this window, or when
+                # entering a dip-line constraint (the previous slice's dip may be far from the line's).
+                if res is None or chi > 1.5 * chi_prev or (cons and not prev_constrained):
+                    starts = default_starts(inv, sub, k, weights=w)
+                    fresh = inv.multistart(_constrained_starts(inv, starts, cons, k) if cons else starts)
                     if res is None or fresh.cost < res.cost:
                         res, chi = fresh, _chi(fresh, sigma, labels, w)
-            x_prev, chi_prev = res.x, chi
+                unc = _uncertainty(inv, res)
+            slice_factors = {}
+            if cons and downweight:
+                # Curves that still disagree with the line-constrained model lose weight; refit once with them.
+                f = _misfit_factors(res, sigma, labels, w)
+                if any(v < 1 for v in f.values()):
+                    rcfg = replace(scfg, curve_weights={lab: weights[lab] * f.get(lab, 1.0) for lab in labels})
+                    with Inverter(sub, rcfg, on_eval=tick, pool=pool, station_idx=idx) as inv2:
+                        try:
+                            refit = inv2.fit(res.x)
+                        except ValueError:
+                            refit = None
+                        if refit is not None:
+                            res, chi, unc = refit, _chi(refit, sigma, labels, w), _uncertainty(inv2, refit)
+                    slice_factors = {lab: round(v, 3) for lab, v in f.items() if v < 1}
+                for lab, v in f.items():
+                    factors.setdefault(lab, []).append(v)
+            x_prev, chi_prev, prev_constrained = res.x, chi, bool(cons)
             total_nfev += res.nfev
             models[s] = res.model
             mine = owner[idx] == s
             pred[idx[mine]] = res.pred[mine]
-            slices.append(_slice_entry(data, res.model, idx, c, slice_ft, chi))
+            entry = {**_slice_entry(data, res.model, idx, c, slice_ft, chi), **unc}
+            if cons:
+                entry["constraint"] = cons["summary"]
+            if slice_factors:
+                entry["downweighted"] = slice_factors
+            done[s] = entry
             if job is not None:
-                job.partial = {**well_path, "slice_ft": slice_ft, "window_ft": window_ft, "slices": list(slices),
+                job.partial = {**well_path, "slice_ft": slice_ft, "window_ft": window_ft,
+                               "slices": [done[i] for i in sorted(done)], "rerun": rerun_range,
                                "evaluation": count[0], "slice": s + 1, "n_slices": len(centres),
                                "misfit_normalised": round(chi, 2)}
-    if not slices:
+    if not models:
         raise ValueError(f"no slice had {MIN_WINDOW_STATIONS} stations in its {window_ft:g} ft data window; "
                          "use a smaller station step or a wider window")
     obs = np.where(data.valid if data.valid is not None else True, data.obs, np.nan)
     combined = SimpleNamespace(pred=pred, residual=obs - pred, nfev=total_nfev, model=None)
     out = serialize(data, combined, w, sigma, lc, time.time() - t0, used,
                     model=summary_model(data, models, owner))
-    return {**out, "slice_ft": slice_ft, "window_ft": window_ft, "slices": slices}
+    for curve in out["curves"]:
+        if curve["label"] in factors:
+            curve["downweight_factor"] = round(float(np.mean(factors[curve["label"]])), 3)
+    slices = [done[i] for i in sorted(done)]
+    extra = {"rerun": rerun_range} if rerun_range else {}
+    if lines:
+        extra["constraints"] = {"lines": lines, "dip_sigma_deg": dip_sigma, "boundary_sigma_ft": boundary_sigma,
+                                "downweight_misfit": downweight,
+                                "constrained_slices": sum(1 for s, e in done.items() if s not in keep and "constraint" in e)}
+    return {**out, "slice_ft": slice_ft, "window_ft": window_ft, "slices": slices, **extra}
+
+
+def _extrapolate(xs, ys, x) -> float:
+    """Linear interpolation of ys(xs) at x, extended linearly beyond the ends (lines may reach past the interval)."""
+    if xs[0] <= x <= xs[-1] or len(xs) < 2:
+        return float(np.interp(x, xs, ys))
+    i, j = (0, min(len(xs) - 1, 5)) if x < xs[0] else (max(0, len(xs) - 6), len(xs) - 1)
+    if xs[j] == xs[i]:
+        return float(ys[i])
+    return float(ys[i] + (ys[j] - ys[i]) * (x - xs[i]) / (xs[j] - xs[i]))
+
+
+def line_dip(data, azimuth_deg: float, line: dict) -> tuple[float, float] | None:
+    """(dip deg, boundary ft relative to the reference) of a section line, in the inverter's convention: boundaries
+    dip along ``azimuth_deg`` and their TVD at a point is ``b + tan(dip) * h + ref`` with ``h`` the horizontal
+    distance along the azimuth. None when the line spans no horizontal distance."""
+    a = np.deg2rad(azimuth_deg)
+    h = data.traj.ned[:, 0] * np.cos(a) + data.traj.ned[:, 1] * np.sin(a)
+    h1, h2 = (_extrapolate(data.md_ft, h, line[f"md{i}_ft"]) for i in (1, 2))
+    if abs(h2 - h1) < 0.05:
+        return None
+    t = (line["tvd2_ft"] - line["tvd1_ft"]) * FT / (h2 - h1)
+    return float(np.rad2deg(np.arctan(t))), float((line["tvd1_ft"] * FT - data.ref_ned[2] - t * h1) / FT)
+
+
+def _slice_constraints(data, sub, lines, centre, window_ft, dip_sigma, boundary_sigma, dip_limit):
+    """FitConfig overrides for the dip lines whose MD span (plus half a window) covers this slice, or None."""
+    active = [ln for ln in lines
+              if min(ln["md1_ft"], ln["md2_ft"]) - window_ft / 2 <= centre <= max(ln["md1_ft"], ln["md2_ft"]) + window_ft / 2]
+    if not active:
+        return None
+    az = float(np.rad2deg(np.arctan2(sub.traj.axis[:, 1].mean(), sub.traj.axis[:, 0].mean())))
+    dips, anchors = [], []
+    for ln in active:
+        got = line_dip(data, az, ln)
+        if got is None:
+            continue
+        dips.append(got[0])
+        if ln.get("anchor", True):
+            anchors.append(got[1])
+    if not dips:
+        return None
+    dip = float(np.clip(np.mean(dips), -MAX_LINE_DIP_DEG, MAX_LINE_DIP_DEG))
+    return {"cfg": {"dip_prior": (dip, dip_sigma), "boundary_priors": tuple((b, boundary_sigma) for b in anchors),
+                    "dip_limit_deg": max(dip_limit, min(MAX_LINE_DIP_DEG + 5, abs(dip) + 5))},
+            "summary": {"dip_deg": round(dip, 2), "lines": len(dips), "anchored": len(anchors)}}
+
+
+def _constrained_starts(inv, starts, cons, k):
+    """The default starts at the lines' dip, plus one with the boundaries placed on the anchored lines."""
+    d0 = cons["cfg"]["dip_prior"][0]
+    di = inv.lay.dip_index
+    out = []
+    for x in starts:
+        x = np.array(x, float)
+        x[di] = d0
+        out.append(x)
+    anchors = sorted(b for b, _ in cons["cfg"]["boundary_priors"])
+    if anchors and k > 1:
+        bs = list(anchors[:k - 1])
+        while len(bs) < k - 1:
+            bs.append(bs[-1] + 6.0)
+        for i in range(1, len(bs)):
+            bs[i] = max(bs[i], bs[i - 1] + 1.0)
+        x = out[0].copy()
+        x[0] = bs[0]
+        x[1:k - 1] = np.diff(bs)
+        out.append(x)
+    return out
+
+
+def _misfit_factors(res, sigma, labels, w) -> dict[str, float]:
+    """Weight multiplier per used curve: 1 unless its misfit/noise in the window is an outlier, then (tau/chi)^2."""
+    chi = {}
+    for j in np.flatnonzero(w > 0):
+        r = res.residual[:, j] / sigma[labels[j]]
+        r = r[np.isfinite(r)]
+        if r.size:
+            chi[labels[j]] = float(np.sqrt(np.mean(r ** 2)))
+    if len(chi) < 3:
+        return {lab: 1.0 for lab in chi}
+    tau = max(DOWNWEIGHT_MIN_CHI, DOWNWEIGHT_REL_CHI * float(np.median(list(chi.values()))))
+    return {lab: 1.0 if v <= tau else max(DOWNWEIGHT_FLOOR, (tau / v) ** 2) for lab, v in chi.items()}
+
+
+def _uncertainty(inv, res) -> dict:
+    """Posterior standard deviations from the final Jacobian: log10 Rh per layer (decades), boundary depth (ft) and
+    dip (deg). Layers the data cannot see come out large (capped), which is what the display fades first."""
+    jac = res.extra.get("jac") if res.extra else None
+    if jac is None:
+        return {}
+    ne = inv.lay.n_earth
+    J = np.asarray(jac)[:, :ne]
+    rows = int(np.count_nonzero(np.any(J != 0, axis=1)))
+    s2 = max(1.0, 2 * res.cost / max(1, rows - ne))
+    try:
+        cov = np.linalg.inv(J.T @ J + UNCERTAINTY_DAMPING * np.eye(ne)) * s2
+    except np.linalg.LinAlgError:
+        return {}
+    k = inv.cfg.n_layers
+    var = np.clip(np.diag(cov), 0, None)
+    out = {"rh_std_log": [round(float(min(MAX_RH_STD_LOG, np.sqrt(v))), 3) for v in var[k - 1:2 * k - 1]]}
+    if k > 1:
+        A = np.tril(np.ones((k - 1, k - 1)))
+        vb = np.clip(np.diag(A @ cov[:k - 1, :k - 1] @ A.T), 0, None)
+        out["boundary_std_ft"] = [round(float(min(MAX_BOUNDARY_STD_FT, np.sqrt(v))), 2) for v in vb]
+    if inv.cfg.fit_dip:
+        out["dip_std_deg"] = round(float(min(90.0, np.sqrt(var[inv.lay.dip_index]))), 2)
+    return out
+
+
+def _kept_slices(data, centres, request, base, lines, window_ft):
+    """({slice index: base slice entry} to copy, re-run range) for a partial re-run; ({}, None) for a full run."""
+    if base is None:
+        return {}, None
+    lo, hi = request.get("rerun_md_min_ft"), request.get("rerun_md_max_ft")
+    if lo is None:
+        if not lines:
+            return {}, None
+        lo = min(min(ln["md1_ft"], ln["md2_ft"]) for ln in lines) - window_ft / 2
+        hi = max(max(ln["md1_ft"], ln["md2_ft"]) for ln in lines) + window_ft / 2
+    base_md = np.array([np.nan if v is None else v for v in base["md_ft"]], float)
+    if base_md.shape != data.md_ft.shape or not np.allclose(base_md, data.md_ft, atol=1e-3):
+        raise ValueError("the base inversion used different stations: run a full inversion instead")
+    by_centre = {round(float(e["md_centre_ft"]), 2): e for e in base["slices"]}
+    keep = {}
+    for s, c in enumerate(centres):
+        e = by_centre.get(round(float(c), 2))
+        if not (lo <= c <= hi) and e is not None and len(e["layers"]) == request["layers"]:
+            keep[s] = e
+    return keep, {"base_job_id": request.get("base_job_id"), "md_min_ft": round(float(lo), 2),
+                  "md_max_ft": round(float(hi), 2), "kept_slices": len(keep), "recomputed_slices": len(centres) - len(keep)}
+
+
+def _base_pred(data, base, labels) -> np.ndarray:
+    """The base result's predictions in inversion units (log10 for resistivities), per station and label."""
+    pred = np.full((len(data.md_ft), len(labels)), np.nan)
+    for c in base["curves"]:
+        if c["label"] not in labels:
+            continue
+        v = np.array([np.nan if x is None else x for x in c["pred"]], float)
+        if c.get("unit") == "ohm.m":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                v = np.log10(v)
+        pred[:, labels.index(c["label"])] = v
+    return pred
+
+
+def _model_from_slice(data, entry) -> LayerModel:
+    """Rebuild a slice's layered model from its stored entry (inverse of ``model_geometry`` at one station)."""
+    rh = np.array([layer["rh"] for layer in entry["layers"]], float)
+    rv = np.array([layer["rv"] for layer in entry["layers"]], float)
+    m = LayerModel(np.zeros(len(rh) - 1), rh, rv, float(entry["dip_deg"]), float(entry["dip_azimuth_deg"]))
+    n = m.normal()
+    bounds = []
+    for b in entry["boundary_tvd_ft"]:
+        i = next((i for i, v in enumerate(b) if v is not None), None)
+        if i is None:
+            bounds.append(np.nan)
+            continue
+        ned = data.traj.ned[int(np.argmin(np.abs(data.md_ft - entry["md_ft"][i])))]
+        bounds.append(b[i] * FT + (ned[0] * n[0] + ned[1] * n[1]) / n[2] - data.ref_ned[2])
+    m.boundaries_m = np.array(bounds, float)
+    return m
+
+
+def _x_from_model(m) -> np.ndarray:
+    """Inverter parameters (shared anisotropy, fitted dip) of a layered model, as a warm start."""
+    b = m.boundaries_m / FT
+    layer_part = ([b[0]] + list(np.diff(b))) if len(b) else []
+    return np.array(layer_part + list(np.log10(m.rh)) + [np.log10(m.rv[0] / m.rh[0]), m.dip_deg], float)
+
+
+def section_preview(run, request: dict) -> dict:
+    """Well path and measured channels of the interval, as the inversion would load them, without inverting."""
+    plan = build_plan(run, request["curves"], request["calibration"])
+    if not plan["used"]:
+        raise ValueError("none of the selected curves can be inverted; select AR, ZR or ZG curves in QC")
+    fwd = ADRForward(azimuthal=plan["azimuthal"])
+    labels = fwd.channel_labels()
+    used = {e["label"]: e for e in plan["used"]}
+    sources = {lab: plan["_sources"].get(lab, lab) for lab in labels}
+    data = interval_from_run(run, request["md_min_ft"], request["md_max_ft"], fwd, request["step_ft"],
+                             sources, required=list(used))
+    curves = []
+    for j, lab in enumerate(labels):
+        if lab not in used:
+            continue
+        group, kind, measurement = _curve_meta(lab)
+        log_unit = data.units[j] == "log"
+        values = np.where(data.valid[:, j], 10 ** data.obs[:, j] if log_unit else data.obs[:, j], np.nan)
+        curves.append({"label": lab, "group": group, "kind": kind, "measurement": measurement,
+                       "unit": "ohm.m" if log_unit else data.units[j], "used": True,
+                       "weight": used[lab]["weight"], "source": used[lab]["source"], "obs": _none(values)})
+    return {"run": request["run"], "well": data.well, "md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
+            "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1)))),
+            "stations": int(len(data.md_ft)), "curves": curves}
 
 
 def slice_centres(md_min: float, md_max: float, slice_ft: float) -> np.ndarray:
