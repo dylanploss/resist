@@ -73,8 +73,13 @@ def job_summary(job) -> dict:
     if job.result is not None:
         stations = job.result.get("stations")
         boundaries = len(job.result.get("model", {}).get("boundary_tvd_ft", []))
+        misfit = job.result.get("misfit_normalised")
     else:
         stations, boundaries = summary.get("stations"), summary.get("boundaries") or 0
+        misfit = summary.get("misfit_normalised")
     return {"id": job.id, "run": job.run, "status": job.status, "finished": job.finished,
             "md_min_ft": req["md_min_ft"], "md_max_ft": req["md_max_ft"], "layers": req["layers"],
+            "step_ft": req.get("step_ft"), "slice_ft": req.get("slice_ft"), "window_ft": req.get("window_ft"),
+            "quick": req.get("quick"), "curves": len(req.get("curves") or []), "lines": len(req.get("lines") or []),
+            "base_job_id": req.get("base_job_id"), "misfit_normalised": misfit,
             "stations": stations, "boundaries": boundaries, "source": getattr(job, "source", "computed")}

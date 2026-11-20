@@ -46,7 +46,8 @@ def station_key(md_ft) -> str:
 def summary_of(record: dict) -> dict:
     result = record.get("result") or {}
     return {"stations": result.get("stations"),
-            "boundaries": len(result.get("model", {}).get("boundary_tvd_ft", []))}
+            "boundaries": len(result.get("model", {}).get("boundary_tvd_ft", [])),
+            "misfit_normalised": result.get("misfit_normalised")}
 
 
 def without_result(record: dict) -> dict:

@@ -5,8 +5,8 @@ import {
   ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material'
 import {
-  getAutoSelection, getInversionDefaults, getInversionJob, getInversionTargets, getSavedSelection, postInversionJob,
-  postInversionPlan, postInversionSection,
+  getAutoSelection, getInversionDefaults, getInversionJob, getInversionJobs, getInversionTargets, getSavedSelection,
+  postInversionJob, postInversionPlan, postInversionSection,
 } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
 import ApiStatus from '../components/ApiStatus.jsx'
@@ -247,18 +247,24 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const [lineOptions, setLineOptions] = useState(LINE_OPTIONS)
   const lines = useMemo(() => linesByRun[run] ?? [], [linesByRun, run])
   const setLines = (next) => setLinesByRun((s) => ({ ...s, [run]: next }))
+  // Curves of a loaded inversion replace the QC selection until the user switches back.
+  const [loadedCurves, setLoadedCurves] = useState(null)
+  const curveSource = loadedCurves?.run === run && loadedCurves.live === liveSelection
+    ? { curves: loadedCurves.curves, from: `inversion ${loadedCurves.id.slice(0, 6)}` } : qcCurves
+  const [previous, setPrevious] = useState({ run: null, jobs: [], error: null })
+  const [loading, setLoading] = useState(null)
 
   const settings = useMemo(() => settingsByRun[run] ?? (defaults.data
     ? { ...BASE_SETTINGS, mdMin: String(defaults.data.md_min_ft), mdMax: String(defaults.data.md_max_ft) } : null),
   [settingsByRun, run, defaults.data])
   const update = (patch) => setSettingsByRun((s) => ({ ...s, [run]: { ...settings, ...patch } }))
 
-  const request = useMemo(() => (settings && qcCurves.curves.length ? {
-    run, curves: qcCurves.curves, md_min_ft: Number(settings.mdMin), md_max_ft: Number(settings.mdMax),
+  const request = useMemo(() => (settings && curveSource.curves.length ? {
+    run, curves: curveSource.curves, md_min_ft: Number(settings.mdMin), md_max_ft: Number(settings.mdMax),
     step_ft: settings.step, layers: settings.layers, calibration: settings.calibration, quick: settings.quick,
     slice_ft: Number(settings.sliceFt ?? 4), window_ft: Number(settings.windowFt ?? 20),
     rh_min_ohmm: Number(settings.rhMin ?? 0.1), rh_max_ohmm: Number(settings.rhMax ?? 1000),
-  } : null), [run, qcCurves.curves, settings])
+  } : null), [run, curveSource.curves, settings])
   const planKey = request ? JSON.stringify(request) : null
 
   useEffect(() => {
@@ -289,6 +295,41 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
 
   const jobId = job?.id
   const jobActive = ACTIVE.includes(job?.status)
+  const jobDone = job?.status === 'done'
+  useEffect(() => {
+    if (!run) return undefined
+    let cancelled = false
+    getInversionJobs(run)
+      .then((body) => !cancelled && setPrevious({ run, jobs: body.jobs, error: null }))
+      .catch((e) => !cancelled && setPrevious({ run, jobs: [], error: e.message }))
+    return () => { cancelled = true }
+  }, [run, jobId, jobDone])
+
+  // Show a stored inversion and put every setting it was run with back into the form.
+  const loadInversion = (id) => {
+    setLoading(id)
+    setSubmitError(null)
+    getInversionJob(id).then((j) => {
+      const req = j.request
+      setSettingsByRun((s) => ({ ...s, [j.run]: { ...BASE_SETTINGS, ...(s[j.run] ?? {}),
+        mdMin: String(req.md_min_ft), mdMax: String(req.md_max_ft), step: Number(req.step_ft), layers: req.layers,
+        calibration: req.calibration, quick: req.quick, sliceFt: String(req.slice_ft ?? 4),
+        windowFt: String(req.window_ft ?? 20), rhMin: String(req.rh_min_ohmm ?? 0.1), rhMax: String(req.rh_max_ohmm ?? 1000) } }))
+      setLoadedCurves({ run: j.run, id: j.id, curves: req.curves, live: liveSelection })
+      const used = req.lines ?? []
+      if (used.length) {
+        setLinesByRun((s) => ({ ...s, [j.run]: used.map((l, i) => ({ id: `${j.id}-${i}`, anchor: true, ...l })) }))
+      }
+      setLineOptions((o) => ({ ...o, apply: used.length > 0, partial: Boolean(req.base_job_id),
+        dipSigma: req.dip_sigma_deg ?? o.dipSigma, boundarySigma: req.boundary_sigma_ft ?? o.boundarySigma,
+        downweight: req.downweight_misfit ?? o.downweight }))
+      if (req.target === 'server' || req.target === 'local') setTarget(req.target)
+      setForce(false)
+      setJob(j)
+    }).catch((e) => setSubmitError(`Could not load inversion ${id}: ${e.message}`))
+      .finally(() => setLoading(null))
+  }
+
   useEffect(() => {
     if (!jobId || !jobActive) return undefined
     const timer = setTimeout(() => {
@@ -350,12 +391,55 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
           {runs.data && <RunPicker fullWidth runs={runs.data.runs} value={run} onChange={onRunChange} />}
         </Card>
 
-        <Card title="Curves from QC selection" extra={qcCurves.from ?? undefined}>
+        {run && (
+          <Card title="Previous inversions" extra="load one to show it and restore its settings">
+            {previous.run === run && previous.error && <Alert severity="error">{previous.error}</Alert>}
+            {previous.run === run && !previous.jobs.length && !previous.error && (
+              <Typography variant="body2" color="text.secondary">No finished inversions for this run yet.</Typography>
+            )}
+            {previous.run === run && previous.jobs.length > 0 && (
+              <FormControl size="small" fullWidth disabled={jobActive}>
+                <InputLabel id="inv-previous">Inversion</InputLabel>
+                <Select labelId="inv-previous" label="Inversion" value={job?.run === run && previous.jobs.some((p) => p.id === job.id) ? job.id : ''}
+                  onChange={(e) => loadInversion(e.target.value)}>
+                  {previous.jobs.map((p) => (
+                    <MenuItem key={p.id} value={p.id} dense>
+                      <Box>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {p.md_min_ft}–{p.md_max_ft} ft · {p.layers} layers · {p.step_ft ?? '?'}/{p.slice_ft ?? '?'}/{p.window_ft ?? '?'} ft
+                          {p.quick ? ' · quick' : ''}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {p.id.slice(0, 6)}
+                          {p.finished ? ` · ${new Date(p.finished * 1000).toLocaleString()}` : ''}
+                          {` · ${p.curves} curves`}
+                          {p.misfit_normalised != null ? ` · misfit/noise ${p.misfit_normalised}` : ''}
+                          {p.lines ? ` · ${p.lines} dip line(s)` : ''}
+                          {p.base_job_id ? ' · partial re-run' : ''}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+            {loading && <LinearProgress sx={{ mt: 1 }} />}
+            <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+              Step / slice / window shown in ft. Loading sets the interval, settings, curves and dip lines it used.
+            </Typography>
+          </Card>
+        )}
+
+        <Card title={curveSource === qcCurves ? 'Curves from QC selection' : 'Curves from loaded inversion'}
+          extra={curveSource.from ?? undefined}>
           {!run && <Typography variant="body2" color="text.secondary">Pick a run first.</Typography>}
-          {qcCurves.loading && <LinearProgress />}
-          {qcCurves.error && <Alert severity="error">{qcCurves.error}</Alert>}
+          {qcCurves.loading && curveSource === qcCurves && <LinearProgress />}
+          {qcCurves.error && curveSource === qcCurves && <Alert severity="error">{qcCurves.error}</Alert>}
           {plan.error && plan.key === planKey && <Alert severity="error">{plan.error}</Alert>}
           {currentPlan && <PlanView plan={currentPlan} />}
+          {run && curveSource !== qcCurves && (
+            <Button size="small" onClick={() => setLoadedCurves(null)} sx={{ mt: 0.5, mr: 1 }}>Use QC selection instead</Button>
+          )}
           {run && (
             <Button size="small" onClick={onOpenQc} sx={{ mt: 0.5 }}>Edit selection in QC</Button>
           )}
