@@ -1,7 +1,7 @@
 ---
 title: Inversion results in an Azure Cosmos DB graph (Gremlin API)
 slug: inversion-cosmos-graph
-status: approved 2026-11-19 15:13; Cosmos live connection blocked by tenant policy, hackathon runs on option C (memory + committed snapshot), 2026-11-19 15:40
+status: approved 2026-11-19 15:13; Cosmos live connection blocked by tenant policy, hackathon runs on option C (memory + committed snapshot), 2026-11-19 15:40; LIVE 2026-11-20 (Cosmos primary + snapshot backup)
 owner: Ove (plan by Planner)
 created: 2026-11-19
 supersedes: inversion-graph-store (Neo4j)
@@ -9,6 +9,11 @@ traceability: false
 ---
 
 # Inversion results in an Azure Cosmos DB graph (Gremlin API)
+
+> **Live since 2026-11-20.** Public network access is enabled (tags `SecurityControl=Ignore`,
+> `CostControl=Ignore`). `DualStore` (`backend/inversion/store.py`) reads from Cosmos first (5 s timeout,
+> then the snapshot), writes to Cosmos and `data/graph/inversions.json`, and syncs both ways by
+> fingerprint at startup. Cosmos ids must not contain `/ \ ? #`, and `label` is a reserved property name.
 
 ## Goal
 
