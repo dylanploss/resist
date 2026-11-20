@@ -81,3 +81,16 @@ def test_request_key_ignores_weights_but_fingerprint_does_not():
     fp, key = service.fingerprint("run", request, plan)
     fp2, key2 = service.fingerprint("run", request, reweighted)
     assert key == key2 and fp != fp2
+
+
+def test_whole_run_interval_is_accepted():
+    """No length limit on 1.5D requests: a whole run (several thousand ft) validates, and defaults report no limits."""
+    from fastapi.testclient import TestClient
+    from backend.app import app
+    from backend.inversion.api import InversionRequest
+    req = InversionRequest(run="r", curves=["ARH16P"], md_min_ft=18580, md_max_ft=24394, layers=4, quick=True)
+    assert req.md_max_ft - req.md_min_ft > 5000
+    from backend.services import runs
+    run_id = next(iter(runs.run_paths()))
+    body = TestClient(app).get("/inversion/defaults", params={"run": run_id}).json()
+    assert (body["max_stations"], body["max_interval_ft"], body["max_slices"]) == (None, None, None)

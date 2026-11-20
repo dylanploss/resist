@@ -221,7 +221,8 @@ The fit weights a channel by `weight / sigma`.
 ### 4.5 Stations and missing samples
 
 - **Stations:** the DLIS samples between `md_min_ft` and `md_max_ft`, thinned to about one per `step_ft`. At most
-  250 stations and 1500 ft.
+  No limit on the interval, stations or slices: a whole run can be inverted in one job (`MAX_INTERVAL_FT`,
+  `MAX_STATIONS`, `MAX_SLICES` are `None`). The cost is about proportional to the number of slices.
 - **Units:** resistivities are fitted as log10 of the value; geosignals as delivered.
 - **Missing data:** a station is kept while at least one weighted channel has a value there and the trajectory
   (TVD, INC, AZI, UTMX, UTMY) is complete. A missing value (clipped, null, non-positive) drops out of the fit for that
@@ -728,7 +729,7 @@ It shares the `Inverter`, the forward model, the plan and the job slot with the 
 | Lateral offset | not applicable | the interval-median right/left contrast of each image is removed first (`remove_lateral_offset`) |
 | Worker pool | one per job | one per window |
 | Uncertainty, dip lines, store | yes | no |
-| Interval limit | 1500 ft | 1000 ft |
+| Interval limit | none | 1000 ft |
 
 With `compare` on, each window is also fitted without the cross dip, and both misfits are reported. The right/left
 sense assumes image bin 8 looks to the right of the tool looking downhole; `rotation: -1` mirrors it.
@@ -742,7 +743,7 @@ sense assumes image bin 8 looks to the right of the tool looking downhole; `rota
 | Facet evaluation limit | 8 quick, 15 full | facets.py, `run_facets` |
 | Restart factor | 1.5 | service.py, `run_inversion` |
 | `DEFAULT_SLICE_FT`, `DEFAULT_WINDOW_FT` | 4, 20 | service.py |
-| `MAX_STATIONS`, `MAX_INTERVAL_FT`, `MAX_SLICES` | 250, 1500, 300 | service.py |
+| `MAX_STATIONS`, `MAX_INTERVAL_FT`, `MAX_SLICES` | `None` (no limit) | service.py |
 | `MIN_WINDOW_STATIONS` | 3 | service.py |
 | `SIGMA_FLOOR` | 0.02 decades, 0.5 deg, 0.05 dB | service.py |
 | `CALIBRATED_ATTENUATION_WEIGHT` | 0.5 at 2 MHz, 0 at 500 and 125 kHz | service.py |

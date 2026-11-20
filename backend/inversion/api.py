@@ -53,7 +53,7 @@ class InversionRequest(BaseModel):
     def check_interval(self):
         if self.md_max_ft <= self.md_min_ft:
             raise ValueError("md_max_ft must be greater than md_min_ft")
-        if self.md_max_ft - self.md_min_ft > service.MAX_INTERVAL_FT:
+        if service.MAX_INTERVAL_FT is not None and self.md_max_ft - self.md_min_ft > service.MAX_INTERVAL_FT:
             raise ValueError(f"interval longer than {service.MAX_INTERVAL_FT:.0f} ft")
         if self.window_ft < self.slice_ft:
             raise ValueError("window_ft must be at least slice_ft")

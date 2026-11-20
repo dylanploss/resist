@@ -348,8 +348,10 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc, openRe
   }, [jobId, jobActive, job])
 
   const currentPlan = plan.key === planKey ? plan.body : null
-  const tooMany = currentPlan && defaults.data && (currentPlan.estimated_stations > defaults.data.max_stations
-    || currentPlan.estimated_slices > defaults.data.max_slices)
+  // The backend reports null for a limit it does not have (no length limit on 1.5D jobs).
+  const over = (value, limit) => limit != null && value > limit
+  const tooMany = currentPlan && defaults.data && (over(currentPlan.estimated_stations, defaults.data.max_stations)
+    || over(currentPlan.estimated_slices, defaults.data.max_slices))
   const canRun = Boolean(request && currentPlan && currentPlan.used.length && !jobActive && !tooMany)
 
   const result = job?.run === run && job?.status === 'done' ? job.result : null

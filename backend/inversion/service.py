@@ -67,12 +67,14 @@ WELL_CHANNEL_WEIGHTS = (
 LS_SPACINGS = (50, 66, 82)
 SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
 WORKERS = int(os.environ.get("RESIST_INVERSION_WORKERS", 6))  # process-pool size per job
-MAX_STATIONS = 250
-MAX_INTERVAL_FT = 1500.0
+# Size limits of one 1.5D job (None = no limit). Lifted so a whole run can be inverted in one job; the cost grows
+# linearly with the number of slices (each slice is its own small fit), not with the interval as a whole.
+MAX_STATIONS: int | None = None
+MAX_INTERVAL_FT: float | None = None
 # Each slice of the curtain is its own 1.5D fit on a sliding data window centred on it.
 DEFAULT_SLICE_FT = 4.0
 DEFAULT_WINDOW_FT = 20.0
-MAX_SLICES = 300
+MAX_SLICES: int | None = None
 MIN_WINDOW_STATIONS = 3
 # Bump when the inversion code changes its results: repeated requests then recompute and supersede the old ones.
 # "2": quadrant sectors, per-slice sliding-window fits with warm starts, Rh fit bounds.
@@ -465,7 +467,7 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None, base: 
     sources = {lab: plan["_sources"].get(lab, lab) for lab in labels}
     data = interval_from_run(run, request["md_min_ft"], request["md_max_ft"], fwd, request["step_ft"],
                              sources, required=_weighted(used), require="any")
-    if len(data.md_ft) > MAX_STATIONS:
+    if MAX_STATIONS is not None and len(data.md_ft) > MAX_STATIONS:
         raise ValueError(f"{len(data.md_ft)} stations exceed {MAX_STATIONS}; shorten the interval or increase the step")
     weights = {lab: used[lab]["weight"] if lab in used else 0.0 for lab in labels}
     w = np.array([weights[lab] for lab in labels])
@@ -477,7 +479,7 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None, base: 
     k = request["layers"]
     slice_ft, window_ft = request.get("slice_ft", DEFAULT_SLICE_FT), request.get("window_ft", DEFAULT_WINDOW_FT)
     centres = slice_centres(float(data.md_ft[0]), float(data.md_ft[-1]), slice_ft)
-    if len(centres) > MAX_SLICES:
+    if MAX_SLICES is not None and len(centres) > MAX_SLICES:
         raise ValueError(f"{len(centres)} slices exceed {MAX_SLICES}; shorten the interval or widen the slices")
     nfev = 6 if request["quick"] else 12
     count, current = [0], [0]
