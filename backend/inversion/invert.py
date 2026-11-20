@@ -13,24 +13,36 @@ reference curves are constrained to zero mean.
 
 from __future__ import annotations
 
+import atexit
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+import multiprocessing
+import os
 from pathlib import Path
+import threading
+import warnings
+import weakref
 
 import numpy as np
 from scipy.optimize import least_squares
 
+from backend.data.loader import mask_clipped
 from backend.data.quadrants import quadrant
 from backend.inversion.adr_forward import FT, ADRForward, LayerModel, Trajectory
 
 DEFAULT_REFERENCE = ("ARH16P", "ARH32P", "ARH48P", "ARM16P", "ARM32P", "ARM48P", "ARL48P")
 
 # Z-20 20100-20500 ft study (docs/inversion/HACKATHON_PLAN.md): phase agrees with theory within a few
-# percent; 2 MHz attenuation reads systematically high (corrected below); 500k/125k attenuation shows no
-# transferable correction, so it is QC-only by default.
+# percent; 2 MHz attenuation reads systematically high, which the forward model's dielectric effect now accounts for
+# (``adr_forward.permittivity``; it replaced the empirical Z-20 correction table); 500k/125k attenuation stays
+# QC-only until the dielectric model is checked against them.
 HACKATHON_WEIGHTS = {"ARH16A": 0.5, "ARH32A": 0.5, "ARH48A": 0.5,
                      "ARM16A": 0.0, "ARM32A": 0.0, "ARM48A": 0.0, "ARL48A": 0.0}
-Z20_ATTENUATION_CORRECTION = {"ARH16A": (0.0820, 0.1251), "ARH32A": (0.0567, 0.0871), "ARH48A": (0.0526, 0.0760)}
+
+
+def is_attenuation(label: str) -> bool:
+    """True for attenuation channels: ``ARH16A``, ``ZRH16AT``, ``ZGM48AT`` (geosignal attenuation)."""
+    return label[-1] == "A" if label.startswith("AR") else label[-2] == "A"
 
 
 @dataclass
@@ -57,6 +69,13 @@ class IntervalData:
     def is_log(self):
         return np.array([u == "log" for u in (self.units or ["log"] * len(self.labels))])
 
+    def valid_mask(self):
+        return np.ones(self.obs.shape, bool) if self.valid is None else self.valid
+
+    def masked_obs(self):
+        """Observations with NaN where no measured value exists (``obs`` holds 0 there)."""
+        return np.where(self.valid_mask(), self.obs, np.nan)
+
 
 def load_interval(path, md_min, md_max, fwd: ADRForward, step_ft=2.0, corrected=False):
     from backend.data.loader import load_run
@@ -70,8 +89,9 @@ TRAJECTORY_CURVES = ("TVD", "INC", "AZI", "UTMX", "UTMY")
 
 
 def azimuthal_average(image):
-    """Conductivity mean of the bins of a resistivity image (depth x bins); reproduces the delivered AR curve."""
-    img = np.asarray(image, float)
+    """Conductivity mean of the bins of a resistivity image (depth x bins); reproduces the delivered AR curve.
+    Clip values (``backend.data.loader.CLIP_OHMM``) are missing data."""
+    img = mask_clipped(image)
     if img.ndim == 1:
         return img
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -93,14 +113,16 @@ def _has_source(c, src):
     return (src[0] if isinstance(src, tuple) else src) in c
 
 
-def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources=None, required=None):
+def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources=None, required=None,
+                      require="all"):
     """Interval data for a loaded WellRun.
 
     ``sources`` maps each forward-model label to its delivered data: a curve name (``ARH16P``, ``ARH16PC``,
     ``ZRH16PT``; a 32-bin image such as ``ZRH16P`` is reduced by ``azimuthal_average``), ``(image, bin)`` for one
     bin, or ``(image, side)`` for a 90-degree quadrant sector (``("ZRH16P", "T")``; see ``backend.data.quadrants``). Labels without a usable source are kept as NaN-free zeros and must
-    get weight 0. Stations are dropped only where a ``required`` label (default: all sourced labels) or the
-    trajectory is missing.
+    get weight 0. Stations are dropped where the trajectory is missing, and where a ``required`` label (default: all
+    sourced labels) is missing; with ``require="any"`` a station is kept while at least one required label has data,
+    and its other missing values (clipped samples, gaps) are left out of the fit channel by channel.
     """
     c = run.curves
     missing = [k for k in TRAJECTORY_CURVES if k not in c]
@@ -121,7 +143,11 @@ def interval_from_run(run, md_min, md_max, fwd: ADRForward, step_ft=2.0, sources
         obs = np.where(is_log, np.log10(np.where(raw > 0, raw, np.nan)), raw)
     traj_cols = [c[k][idx] for k in TRAJECTORY_CURVES]
     req = [labels.index(lab) for lab in required]
-    ok = np.all(np.isfinite(obs[:, req]), axis=1) & np.all([np.isfinite(t) for t in traj_cols], axis=0)
+    have = np.isfinite(obs[:, req])
+    if require not in ("all", "any"):
+        raise ValueError(f"require must be 'all' or 'any', not {require!r}")
+    ok = (have.all(axis=1) if require == "all" else have.any(axis=1)) & \
+        np.all([np.isfinite(t) for t in traj_cols], axis=0)
     if ok.sum() < 3:
         raise ValueError(f"fewer than 3 stations with complete data between {md_min} and {md_max} ft MD")
     tvd, inc, azi, ue, un = (t[ok] for t in traj_cols)
@@ -164,6 +190,9 @@ class FitConfig:
     curve_weights: dict | None = None  # label -> weight multiplier (0 excludes a curve)
     level_correction: "LevelCorrection | None" = None  # fixed tool-vs-theory correction on the theory
     max_nfev: int = 25
+    # Fit the anisotropy to phase only: a first fit without attenuation channels sets Rv/Rh, which is then held while
+    # every channel fits the rest (attenuation is the channel most affected by the dielectric effect).
+    anisotropy_from_phase: bool = False
     # Interpreter constraints (dip lines drawn on the section): Gaussian priors appended to the residual.
     dip_prior: tuple | None = None     # (dip deg, sigma deg) on the along-well dip
     boundary_priors: tuple = ()        # ((boundary ft relative to the reference, sigma ft), ...) on the nearest boundary
@@ -191,6 +220,11 @@ class Layout:
     @property
     def dip_index(self):
         return (self.cfg.n_layers - 1) + self.cfg.n_layers + self.n_aniso
+
+    @property
+    def aniso_indices(self):
+        start = (self.cfg.n_layers - 1) + self.cfg.n_layers
+        return np.arange(start, start + self.n_aniso)
 
     def prior_rows(self, x):
         """Constraint residuals and their Jacobian rows: the dip prior, then each boundary prior on the nearest
@@ -265,12 +299,40 @@ class Layout:
 _FWD: ADRForward | None = None
 _TRAJ: Trajectory | None = None
 
+# Each worker runs one forward model at a time, so multi-threaded BLAS only oversubscribes the cores: with it, a
+# pool of N workers starts N x cores BLAS threads, each with its own buffers. One thread per worker made inversions
+# about 3x faster and stopped the out-of-memory failures (OpenBLAS, Linux); VECLIB_MAXIMUM_THREADS is the same limit
+# for numpy builds on Apple's Accelerate. Set before the workers start; they are spawned (not forked), so they load
+# numpy fresh with this environment. RESIST_WORKER_BLAS_THREADS overrides the count.
+WORKER_BLAS_THREADS = os.environ.get("RESIST_WORKER_BLAS_THREADS", "1")
+WORKER_ENV = {"OPENBLAS_NUM_THREADS": WORKER_BLAS_THREADS, "VECLIB_MAXIMUM_THREADS": WORKER_BLAS_THREADS}
+PARENT_CHECK_S = 2.0
+_POOLS: "weakref.WeakSet[ProcessPoolExecutor]" = weakref.WeakSet()
 
-def _init_worker(receiver_sep_in, traj, azimuthal=False, options=None):
+
+def _watch_parent(parent_pid: int):
+    """Exit this worker when the process that started it is gone (killed backend, reloaded server), so workers do
+    not outlive it holding memory."""
+    def run():
+        while True:
+            if os.getppid() != parent_pid:
+                os._exit(0)
+            threading.Event().wait(PARENT_CHECK_S)
+    threading.Thread(target=run, name="parent-watch", daemon=True).start()
+
+
+def _init_worker(receiver_sep_in, traj, azimuthal=False, options=None, parent_pid=None):
     global _FWD, _TRAJ
+    if parent_pid is not None:
+        _watch_parent(parent_pid)
     _FWD = ADRForward(receiver_sep_in=receiver_sep_in, azimuthal=azimuthal, **(options or {}))
     _FWD.tables()
     _TRAJ = traj
+
+
+def _worker_env():
+    """The environment the pool's workers see (for tests)."""
+    return {k: os.environ.get(k) for k in WORKER_ENV}
 
 
 def _predict(task):
@@ -279,9 +341,39 @@ def _predict(task):
 
 
 def worker_pool(traj: Trajectory, workers: int, receiver_sep_in=8.0, azimuthal=False, options=None):
-    """A pool on the full trajectory, shared by Inverters of sub-windows (``Inverter(pool=..., station_idx=...)``)."""
-    return ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
-                               initargs=(receiver_sep_in, traj, azimuthal, options))
+    """A pool on the full trajectory, shared by Inverters of sub-windows (``Inverter(pool=..., station_idx=...)``).
+
+    Workers are spawned with ``WORKER_ENV`` (single-threaded BLAS), exit if this process dies, and are stopped by
+    ``shutdown_pools`` when it exits normally."""
+    # Spawned children copy os.environ when they start, which happens lazily on submit, so the setting stays in place.
+    os.environ.update(WORKER_ENV)
+    pool = ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"),
+                               initializer=_init_worker,
+                               initargs=(receiver_sep_in, traj, azimuthal, options, os.getpid()))
+    _POOLS.add(pool)
+    return pool
+
+
+def shutdown_pools(timeout: float = 5.0) -> int:
+    """Stop every worker pool of this process (pending work is cancelled, running workers are terminated); returns
+    the number of worker processes stopped. Called on backend shutdown and at interpreter exit."""
+    procs = []
+    for pool in list(_POOLS):
+        procs += list((getattr(pool, "_processes", None) or {}).values())
+        pool.shutdown(wait=False, cancel_futures=True)
+        _POOLS.discard(pool)
+    for proc in procs:
+        if proc.is_alive():
+            proc.terminate()
+    for proc in procs:
+        proc.join(timeout)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(1.0)
+    return len(procs)
+
+
+atexit.register(shutdown_pools)
 
 
 @dataclass
@@ -298,7 +390,7 @@ class FitResult:
     extra: dict = field(default_factory=dict)
 
     def rms_percent(self, axis=None):
-        return 100 * (10 ** np.sqrt(np.mean(self.residual ** 2, axis=axis)) - 1)
+        return 100 * (10 ** np.sqrt(np.nanmean(self.residual ** 2, axis=axis)) - 1)
 
     def summary(self):
         m = self.model
@@ -308,7 +400,7 @@ class FitResult:
             "dip_deg": round(float(m.dip_deg), 2), "dip_azimuth_deg": round(float(m.dip_azimuth_deg), 1),
             "rms_percent": round(float(self.rms_percent()), 2),
             "rms_percent_by_curve": dict(zip(self.labels, self.rms_percent(axis=0).round(2).tolist())),
-            "mean_residual_percent_by_curve": dict(zip(self.labels, (100 * (10 ** self.residual.mean(0) - 1)).round(2).tolist())),
+            "mean_residual_percent_by_curve": dict(zip(self.labels, (100 * (10 ** np.nanmean(self.residual, 0) - 1)).round(2).tolist())),
             "correction_factor_by_curve": dict(zip(self.labels, (10 ** self.bias).round(4).tolist())),
             "nfev": self.nfev,
         }
@@ -326,12 +418,20 @@ class Inverter:
         self.ref_idx = np.array([data.labels.index(r) for r in cfg.reference if r in data.labels])
         w = cfg.curve_weights or {}
         sig = cfg.curve_sigma or {}
-        self.w = np.array([float(w.get(lab, 1.0)) / float(sig.get(lab, cfg.sigma)) for lab in data.labels])
+        self.valid = data.valid_mask()
+        self._set_weights(np.array([float(w.get(lab, 1.0)) / float(sig.get(lab, cfg.sigma)) for lab in data.labels]))
+        self.attenuation = np.array([is_attenuation(lab) for lab in data.labels])
+        self._frozen = np.array([], int)
         self._owns_pool = pool is None
         self.station_idx = None if station_idx is None else np.asarray(station_idx)
         self.pool = pool or worker_pool(data.traj, workers or min(16, self.lay.n_earth + 1), receiver_sep_in,
                                         cfg.azimuthal, cfg.forward_options)
         self._cache = {}
+
+    def _set_weights(self, w):
+        """Per-curve weights (1/sigma); a residual counts only where its curve has weight and a measured value."""
+        self.w = np.asarray(w, float)
+        self.mask = self.valid & (self.w > 0)[None, :]
 
     def close(self):
         if self._owns_pool:
@@ -367,10 +467,10 @@ class Inverter:
         return np.ones(self.lay.n_curves) if lc is None else 1.0 + lc.g
 
     def _resid(self, x, theory):
-        # Zero-weight channels are carried for display only; mask them so a NaN there (NaN * 0 = NaN) cannot
-        # poison the fit.
+        # Zero-weight channels are carried for display only, and missing samples (clipped, gaps) have no data; mask
+        # both so a NaN there (NaN * 0 = NaN) cannot poison the fit.
         diff = (self._corrected(theory) + self.lay.bias(x) - self.data.obs) * self.w
-        r = np.where(self.w > 0, diff, 0.0).ravel()
+        r = np.where(self.mask, diff, 0.0).ravel()
         prior = self.lay.prior_rows(x)[0]
         if not self.cfg.fit_bias:
             return np.concatenate([r, prior])
@@ -388,23 +488,25 @@ class Inverter:
     def jac(self, x):
         ne = self.lay.n_earth
         steps = self.lay.steps()
+        free = [j for j in range(ne) if j not in set(self._frozen.tolist())]   # held parameters cost no evaluations
         xs = [x]
-        for j in range(ne):
+        for j in free:
             xp = x.copy(); xp[j] += steps[j]; xs.append(xp)
         th = self._theory_batch(xs)
         n, m = self.data.obs.shape
         J = np.zeros((len(self._resid(x, th[0])), self.lay.n_params))
-        for j in range(ne):
-            col = (th[j + 1] - th[0]) / steps[j] * self.w * self._dcorr()
-            J[:n * m, j] = np.where(np.isfinite(col) & (self.w > 0), col, 0.0).ravel()
+        for t, j in zip(th[1:], free):
+            col = (t - th[0]) / steps[j] * self.w * self._dcorr()
+            J[:n * m, j] = np.where(np.isfinite(col) & self.mask, col, 0.0).ravel()
         if self.cfg.fit_bias:
             nb = self.lay.n_curves
-            J[:n * m, ne:] = np.tile(np.diag(self.w), (n, 1))
+            J[:n * m, ne:] = np.tile(np.diag(self.w), (n, 1)) * self.mask.reshape(-1, 1)
             J[n * m:n * m + nb, ne:] = np.eye(nb) / self.cfg.bias_prior
             J[n * m + nb, ne + self.ref_idx] = 100.0
         prior_jac = self.lay.prior_rows(x)[1]
         if len(prior_jac):
             J[-len(prior_jac):] = prior_jac
+        J[:, self._frozen] = 0.0     # held parameters: a zero column gives a zero step
         return J
 
     def check_start(self, x0):
@@ -422,6 +524,22 @@ class Inverter:
             problems.append(f"{self.data.labels[j]}: non-finite {what} at {rows.size} station(s) (MD {md} ft)")
         raise ValueError("start model gives non-finite residuals; " + "; ".join(problems))
 
+    def _solve(self, x0, lo, hi, frozen=()):
+        """One trust-region fit; parameters in ``frozen`` keep their ``x0`` values."""
+        self._frozen = np.asarray(frozen, int)
+        try:
+            sol = least_squares(self.fun, x0, jac=self.jac, bounds=(lo, hi), method="trf",
+                                x_scale="jac", max_nfev=self.cfg.max_nfev)
+        finally:
+            self._frozen = np.array([], int)
+        sol.x[list(frozen)] = x0[list(frozen)]
+        return sol
+
+    def _phase_first(self) -> bool:
+        used = self.w > 0
+        return bool(self.cfg.anisotropy_from_phase and (used & self.attenuation).any()
+                    and (used & ~self.attenuation).any())
+
     def fit(self, x0):
         tvd_rel = self.data.tvd_rel_ft(self.data.tvd_ft)
         lo, hi = self.lay.bounds(tvd_rel.min() - 40, tvd_rel.max() + 40)
@@ -429,13 +547,28 @@ class Inverter:
         if not np.isfinite(x0).all():
             raise ValueError(f"start model has non-finite parameters: {x0}")
         self.check_start(x0)
-        sol = least_squares(self.fun, x0, jac=self.jac, bounds=(lo, hi), method="trf",
-                            x_scale="jac", max_nfev=self.cfg.max_nfev)
+        extra, nfev = {}, 0
+        if self._phase_first():
+            # Rv/Rh from phase alone, then held while all channels (attenuation included) fit everything else.
+            full = self.w
+            self._set_weights(np.where(self.attenuation, 0.0, full))
+            try:
+                phase_sol = self._solve(x0, lo, hi)
+            finally:
+                self._set_weights(full)
+            nfev += int(phase_sol.nfev)
+            x0 = np.clip(phase_sol.x, lo + 1e-9, hi - 1e-9)
+            sol = self._solve(x0, lo, hi, frozen=self.lay.aniso_indices)
+            extra["anisotropy_from"] = "phase"
+        else:
+            sol = self._solve(x0, lo, hi)
+        nfev += int(sol.nfev)
         theory = self._theory_batch([sol.x])[0]
         bias = self.lay.bias(sol.x)
         pred = self._corrected(theory) + bias
-        return FitResult(sol.x, self.lay.model(sol.x), bias, pred, theory, self.data.obs - pred,
-                         self.data.labels, float(sol.cost), int(sol.nfev), {"jac": np.asarray(sol.jac)})
+        residual = np.where(self.valid, self.data.obs - pred, np.nan)
+        return FitResult(sol.x, self.lay.model(sol.x), bias, pred, theory, residual,
+                         self.data.labels, float(sol.cost), nfev, {"jac": np.asarray(sol.jac), **extra})
 
     def multistart(self, starts):
         """Best fit over the starts; a start that cannot be evaluated is skipped, not fatal."""
@@ -481,7 +614,12 @@ def default_starts(inv: Inverter, data: IntervalData, k: int, bias=None, weights
     cols = np.flatnonzero(res & phase)
     if not cols.size:
         cols = np.flatnonzero(res) if res.any() else np.flatnonzero(data.is_log())
-    level = 10 ** np.median(data.obs[:, cols], axis=1)
+    with np.errstate(all="ignore"), warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)          # stations without any of these curves
+        level = 10 ** np.nanmedian(data.masked_obs()[:, cols], axis=1)
+    level = level[np.isfinite(level)]
+    if not level.size:
+        level = np.array([10.0])
     if k == 1:
         return [inv.x_from([], [np.log10(np.median(level))], 0.1, 0.0, bias)]
     tvd = data.tvd_rel_ft(data.tvd_ft)
@@ -522,7 +660,7 @@ class LevelCorrection:
 
     @classmethod
     def from_table(cls, labels, table, pivot=1.0):
-        """table: {curve: (a, g)} in decades, e.g. Z20_ATTENUATION_CORRECTION."""
+        """table: {curve: (a, g)} in decades, e.g. ``{"ARH16A": (0.08, 0.12)}``."""
         a = np.array([table.get(lab, (0.0, 0.0))[0] for lab in labels], float)
         g = np.array([table.get(lab, (0.0, 0.0))[1] for lab in labels], float)
         return cls(list(labels), a, g, pivot)

@@ -9,6 +9,8 @@ import numpy as np
 from backend.qc import metrics
 
 MIN_COVERAGE = 0.8
+# A curve clipped at the tool limit on more than this fraction of its delivered samples in the interval is rejected.
+MAX_CLIPPED = 0.5
 MAX_JAGGEDNESS = 0.8
 # Above 1 a curve is rougher than white noise and carries no usable signal.
 MAX_FALLBACK_JAGGEDNESS = 1.0
@@ -36,11 +38,15 @@ def doi_tier(doi: float) -> str:
     return "medium" if doi <= MEDIUM_MAX_DOI else "deep"
 
 
-def _features(family: str, values: np.ndarray) -> dict:
-    """Reduce a channel to the depth series used for noise and redundancy checks."""
+def _features(family: str, values: np.ndarray, tool_clipped: float = 0.0) -> dict:
+    """Reduce a channel to the depth series used for noise and redundancy checks.
+
+    ``tool_clipped`` is the fraction of delivered samples the loader masked as clip values; samples stuck at another
+    limit (``metrics.mask_saturation``) count as clipped too."""
     if family in ("AR", "ZR"):
-        masked, clipped = metrics.mask_saturation(values)
+        masked, stuck = metrics.mask_saturation(values)
         logs = metrics.log_positive(masked)
+        clipped = tool_clipped + (1 - tool_clipped) * _nan_to(stuck, 0.0)
         out = {"clipped": clipped, "range_ok": metrics.range_ok(masked)}
         if logs.ndim == 1:
             return {**out, "series": logs}
@@ -53,10 +59,10 @@ def _features(family: str, values: np.ndarray) -> dict:
             "asymmetry": metrics.antisymmetry(values)}
 
 
-def score_curve(row: dict, values: np.ndarray) -> dict:
+def score_curve(row: dict, values: np.ndarray, tool_clipped: float = 0.0) -> dict:
     """Quality is 1 - jaggedness, scaled by coverage and geosignal shape; score adds depth."""
     family = row["family"]
-    f = _features(family, values)
+    f = _features(family, values, tool_clipped)
     series = f["series"]
     coverage = float(np.isfinite(series).mean())
     jagged = metrics.jaggedness(series)
@@ -93,7 +99,9 @@ def _nan_to(x, default):
 
 
 def _ineligible_reason(s: dict, best_coverage: float) -> tuple[str, str] | None:
-    """Return (kind, reason); kind is 'coverage', 'range' or 'noisy'."""
+    """Return (kind, reason); kind is 'clipped', 'coverage', 'range' or 'noisy'."""
+    if _nan_to(s["clipped"], 0.0) > MAX_CLIPPED:
+        return "clipped", f"mostly clipped: tool-limit values on {s['clipped']:.0%} of samples in the interval"
     if s["coverage"] < MIN_COVERAGE * best_coverage:
         if _nan_to(s["clipped"], 0.0) > 0.05:
             return "coverage", f"clipped at tool limit on {s['clipped']:.0%} of samples"
@@ -154,10 +162,16 @@ def _measurement_key(s: dict) -> tuple:
     return kind, s["frequency_hz"], s["spacing_in"], s["measurement"]
 
 
-def select_curves(run, n_select: int = DEFAULT_SELECT) -> dict:
-    """Return the QC selection JSON for one WellRun from backend.data.loader."""
+def select_curves(run, n_select: int = DEFAULT_SELECT, md_min_ft: float | None = None,
+                  md_max_ft: float | None = None) -> dict:
+    """Return the QC selection JSON for one WellRun from backend.data.loader, scored on the samples between
+    ``md_min_ft`` and ``md_max_ft`` (default: the whole run)."""
     if not SELECT_RANGE[0] <= n_select <= SELECT_RANGE[1]:
         raise ValueError(f"n_select must be between {SELECT_RANGE[0]} and {SELECT_RANGE[1]}")
+    md = np.asarray(run.curves["DEPT"], float) if "DEPT" in run.curves else run.depth_m / 0.3048
+    rows = (md >= (-np.inf if md_min_ft is None else md_min_ft)) & (md <= (np.inf if md_max_ft is None else md_max_ft))
+    if not rows.any():
+        raise ValueError(f"no samples between {md_min_ft} and {md_max_ft} ft MD")
     scores, rejected, noisy = {}, {}, set()
     for row in run.metadata.to_dict("records"):
         name = row["curve"]
@@ -166,7 +180,8 @@ def select_curves(run, n_select: int = DEFAULT_SELECT) -> dict:
             scores[name] = {"score": 0.0, "coverage": row.get("valid_fraction"),
                             "noise": None, "range_ok": None, "family": "conventional"}
             continue
-        scores[name] = score_curve(row, run.curves[name])
+        clipped = run.clipped_fraction(name, rows) if hasattr(run, "clipped_fraction") else 0.0
+        scores[name] = score_curve(row, run.curves[name][rows], clipped)
     candidates = [n for n, s in scores.items() if s["family"] != "conventional"]
     best_coverage = max((scores[n]["coverage"] for n in candidates), default=0.0)
     for name in candidates:
@@ -248,6 +263,8 @@ def select_curves(run, n_select: int = DEFAULT_SELECT) -> dict:
     return _json_safe({
         "well": run.well,
         "run": run.path.stem,
+        "md_min_ft": float(md[rows][0]),
+        "md_max_ft": float(md[rows][-1]),
         "selected": selected,
         "selected_reasons": reasons,
         "rejected": [{"curve": n, "reason": r} for n, r in rejected.items()],

@@ -10,10 +10,14 @@ The QC page picks curves; this module maps them onto the 1.5D forward model (``b
 * A ``ZG`` geosignal image (any spacing 16-112 in, one transmitter into R3) contributes its **top** quadrant sector
   (phase in deg, attenuation in dB; each bin minus the mean of all bins).
 * ``ZR`` 50/66/82 in long-spacing images contribute top/bottom sectors of T2/T4/T6 into R1 and R3, uncompensated
-  (``adr_forward.R3_IN``; the pairing is inferred), at full weight and with a plan warning.
-* Phase weight 1. With ``calibration`` on, attenuation is down-weighted and 2 MHz attenuation (averaged and
-  top/bottom) gets the Z-20 resistivity-dependent correction (docs/inversion/HACKATHON_PLAN.md).
+  (``adr_forward.R3_IN``; the pairing is inferred), at ``GUESSED_GEOMETRY_WEIGHT`` and with a plan warning.
+* Phase weight 1. With ``calibration`` on, 2 MHz attenuation has weight 0.5 and 500/125 kHz attenuation weight 0
+  (QC only). The forward model includes the dielectric effect (``adr_forward.permittivity``), which replaced the
+  empirical Z-20 attenuation correction. Rv/Rh is fitted to phase only (``FitConfig.anisotropy_from_phase``).
+* ``WELL_CHANNEL_WEIGHTS`` scales channels that misbehave in one well (VC-2: 16 in 2 MHz).
 * Single bins and geosignals are weighted by their own noise, estimated from the data in the interval.
+* Clipped samples (``backend.data.loader.CLIP_OHMM``) are missing data: a station stays in the fit while any weighted
+  channel has data there, and each missing value is left out on its own.
 * ``ZR`` left/right bins and conventional logs are listed as ignored with a reason.
 
 Jobs run one at a time in a background thread because each uses a process pool. The interval is cut into slices
@@ -41,17 +45,25 @@ import numpy as np
 
 from backend.inversion import remote
 from backend.inversion.adr_forward import FT, FREQ_LETTER, R3_IN, ADRForward, LayerModel
-from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
-                                      default_starts, interval_from_run, noise_estimate, worker_pool)
+from backend.inversion.invert import (FitConfig, Inverter, default_starts, interval_from_run, noise_estimate,
+                                      worker_pool)
 
 log = logging.getLogger("resist.inversion")
 AR_CURVE = re.compile(r"^AR([HML])(\d+)([PA])(C?)$")
 ZR_CURVE = re.compile(r"^ZR([HML])(\d+)([PA])([TBLR]?)$")
 ZG_CURVE = re.compile(r"^ZG([HML])(\d+)([PA])$")
 FREQ_HZ = {letter: f for f, letter in FREQ_LETTER.items()}
-CALIBRATED_ATTENUATION_WEIGHT = {2e6: 0.5, 5e5: 0.25, 1.25e5: 0.25}
+# 500/125 kHz attenuation is QC only (docs/inversion/HACKATHON_PLAN.md) until the dielectric model is checked on it.
+CALIBRATED_ATTENUATION_WEIGHT = {2e6: 0.5, 5e5: 0.0, 1.25e5: 0.0}
 GEOSIGNAL_WEIGHT = {"ZGL112AT": 0.25}  # 125 kHz attenuation geosignal barely tracks ZR top/bottom (r < 0.16)
 GUESSED_GEOMETRY_WEIGHT = 1.0           # ZR 50/66/82 in: antenna layout guessed, uncompensated; kept at full weight
+ANISOTROPY_FROM_PHASE = True            # Rv/Rh from phase only, then held while attenuation joins the fit
+# Per-well weight factors on resistivity channels (AR and ZR, not ZG geosignals): (well substring, frequency Hz,
+# spacing in, factor, reason). In VC-2 the 16 in 2 MHz pair reads ~8 % below 32 in on phase and ~20 % above on
+# attenuation over the whole run (a shallow, near-borehole effect the 1D model cannot fit), so it is left out.
+WELL_CHANNEL_WEIGHTS = (
+    ("VC-2", 2e6, 16, 0.0, "VC-2: 16 in 2 MHz reads off the deeper spacings over the whole run (near-borehole effect)"),
+)
 LS_SPACINGS = (50, 66, 82)
 SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
 WORKERS = int(os.environ.get("RESIST_INVERSION_WORKERS", 6))  # process-pool size per job
@@ -66,7 +78,9 @@ MIN_WINDOW_STATIONS = 3
 # "2": quadrant sectors, per-slice sliding-window fits with warm starts, Rh fit bounds.
 # "3": per-slice posterior uncertainty, 50/66/82 in at full weight, dip-line constraints and partial re-runs.
 # "4": ADR spec geometry: R3 at +64 in for long spacing and geosignals (all 16-112 in), bin-minus-average geosignals.
-INVERSION_VERSION = "4"
+# "5": clip values masked, dielectric forward model (no Z-20 table), 500/125 kHz attenuation weight 0, phase-only
+#      anisotropy, per-channel missing data, VC-2 16 in 2 MHz left out.
+INVERSION_VERSION = "5"
 # Request fields that never change the result; every other field of the validated request is fingerprinted.
 NON_RESULT_FIELDS = frozenset({"force", "target"})
 # Fields that only matter with dip lines / a base job; dropped otherwise so plain requests keep their fingerprint.
@@ -83,9 +97,17 @@ UNCERTAINTY_DAMPING = 1e-2    # keeps parameters the data cannot see finite (the
 MAX_RH_STD_LOG = 2.0
 MAX_BOUNDARY_STD_FT = 50.0
 
-# The 2 MHz attenuation bias is a property of the channel, so it applies to its top/bottom bins too.
-ATTENUATION_CORRECTION = {**Z20_ATTENUATION_CORRECTION,
-                          **{f"ZR{lab[2:]}{b}": v for lab, v in Z20_ATTENUATION_CORRECTION.items() for b in "TB"}}
+
+
+def well_channel_factor(well: str, label: str) -> tuple[float, str | None]:
+    """(weight factor, reason) for a resistivity channel in this well from ``WELL_CHANNEL_WEIGHTS``."""
+    if label.startswith("ZG"):
+        return 1.0, None
+    freq, spacing = FREQ_HZ[label[2]], int(re.match(r"\D+(\d+)", label[2:])[1])
+    for token, f, sp, factor, reason in WELL_CHANNEL_WEIGHTS:
+        if token in well and f == freq and sp == spacing:
+            return factor, reason
+    return 1.0, None
 
 
 def channel_labels(azimuthal: bool = True) -> list[str]:
@@ -120,7 +142,8 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
     """Map QC-selected curves onto forward-model labels (first selection of a label wins)."""
     labels = channel_labels(azimuthal=True)
     used: dict[str, dict] = {}
-    ignored = []
+    ignored, well_notes = [], {}
+    well = f"{getattr(run, 'well', '')} {getattr(getattr(run, 'path', None), 'name', '')}"
     for name in curves:
         if name not in run.curves:
             ignored.append({"curve": name, "reason": "not in this run"})
@@ -146,14 +169,16 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
                 weight = 1.0
             if guessed:
                 weight *= GUESSED_GEOMETRY_WEIGHT
+            factor, why = well_channel_factor(well, label)
+            if why:
+                weight *= factor
+                well_notes.setdefault((why, factor), []).append(label)
             entry = {"curve": name, "label": label, "kind": kind, "measurement": measurement,
                      "frequency_hz": freq, "spacing_in": spacing, "guessed_geometry": guessed,
                      "source": source if isinstance(source, str) else f"{source[0]} {source[1]} sector",
                      "vendor_corrected": kind == "avg" and name.endswith("C"), "weight": weight, "correction": None}
-            if calibration and label in ATTENUATION_CORRECTION:
-                a, g = ATTENUATION_CORRECTION[label]
-                entry["correction"] = {"a": a, "g": g, "factor_at_10_ohmm": round(10 ** a, 3),
-                                       "factor_at_40_ohmm": round(10 ** (a + g * (np.log10(40) - 1)), 3)}
+            if why:
+                entry["well_note"] = why
             entry["_source"] = source
             used[label] = entry
     entries = sorted(used.values(), key=lambda e: labels.index(e["label"]))
@@ -167,13 +192,16 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
     if len(entries) < 3:
         warnings.append(f"Only {len(entries)} usable channels from {len(curves)} selected curves: the layered model "
                         "is poorly constrained.")
+    for (why, factor), labs in well_notes.items():
+        warnings.append(f"{why}: {', '.join(labs)} weighted x{factor:g}"
+                        + (" (shown for QC, not fitted)." if factor == 0 else "."))
     guessed = sorted({e["curve"] for e in entries if e["guessed_geometry"]})
     if guessed:
         warnings.append(f"Guessed geometry for {', '.join(guessed)}: the 50/66/82 in long-spacing pairing is "
                         f"inferred, not published. The model fires T2/T4/T6 (16/32/48 in uphole) into R1 (near) and R3 "
                         f"(far, {R3_IN:.0f} in downhole of the tool centre), uncompensated; the spacing is to the R1-R3 "
-                        "midpoint. These channels keep full weight; check their misfit, and treat boundaries they "
-                        "alone resolve with caution.")
+                        f"midpoint. These channels have weight x{GUESSED_GEOMETRY_WEIGHT:g}; check their misfit, and "
+                        "treat boundaries they alone resolve with caution.")
     public = [{k: v for k, v in e.items() if k != "_source"} for e in entries]
     return {"used": public, "ignored": ignored, "calibration": calibration, "warnings": warnings,
             "azimuthal": bool(directional), "_sources": {e["label"]: e["_source"] for e in entries}}
@@ -251,11 +279,12 @@ def canonical_request(run_id: str, request: dict) -> dict:
 
 
 def fingerprint(run_id: str, request: dict, plan: dict, version: str | None = None) -> tuple[str, str]:
-    """(fingerprint, request_key): sha256 of the canonical request + used labels/weights, with/without the version."""
-    body = {**canonical_request(run_id, request),
-            "plan": sorted([e["label"], float(e["weight"])] for e in plan["used"])}
+    """(fingerprint, request_key). The request_key hashes the canonical request + used labels, so a new code version
+    that changes the weights still supersedes the old result; the fingerprint adds the weights and the version."""
+    body = {**canonical_request(run_id, request), "plan": sorted(e["label"] for e in plan["used"])}
     request_key = hashlib.sha256(_canonical(body).encode()).hexdigest()
-    fp = hashlib.sha256(_canonical({**body, "version": version or INVERSION_VERSION}).encode()).hexdigest()
+    weights = sorted([e["label"], float(e["weight"])] for e in plan["used"])
+    fp = hashlib.sha256(_canonical({**body, "weights": weights, "version": version or INVERSION_VERSION}).encode()).hexdigest()
     return fp, request_key
 
 
@@ -409,16 +438,16 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None, base: 
     used = {e["label"]: e for e in plan["used"]}
     sources = {lab: plan["_sources"].get(lab, lab) for lab in labels}
     data = interval_from_run(run, request["md_min_ft"], request["md_max_ft"], fwd, request["step_ft"],
-                             sources, required=list(used))
+                             sources, required=_weighted(used), require="any")
     if len(data.md_ft) > MAX_STATIONS:
         raise ValueError(f"{len(data.md_ft)} stations exceed {MAX_STATIONS}; shorten the interval or increase the step")
     weights = {lab: used[lab]["weight"] if lab in used else 0.0 for lab in labels}
     w = np.array([weights[lab] for lab in labels])
     # Averaged curves keep the 2% floor; single bins and geosignals are weighted by their own measured noise.
-    sigma = {lab: SIGMA_FLOOR[u] if lab.startswith("AR") else noise_estimate(data.obs[:, j], SIGMA_FLOOR[u])
+    obs = data.masked_obs()
+    sigma = {lab: SIGMA_FLOOR[u] if lab.startswith("AR") else noise_estimate(obs[:, j], SIGMA_FLOOR[u])
              for j, (lab, u) in enumerate(zip(labels, data.units))}
-    lc = LevelCorrection.from_table(labels, {lab: ATTENUATION_CORRECTION[lab] for lab in used
-                                             if lab in ATTENUATION_CORRECTION}) if plan["calibration"] else None
+    lc = None   # the dielectric forward model replaced the empirical Z-20 attenuation correction
     k = request["layers"]
     slice_ft, window_ft = request.get("slice_ft", DEFAULT_SLICE_FT), request.get("window_ft", DEFAULT_WINDOW_FT)
     centres = slice_centres(float(data.md_ft[0]), float(data.md_ft[-1]), slice_ft)
@@ -438,7 +467,7 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None, base: 
     t0 = time.time()
     cfg = FitConfig(n_layers=k, curve_weights=weights, curve_sigma=sigma, level_correction=lc, azimuthal=azimuthal,
                     rh_min=request.get("rh_min_ohmm", 0.1), rh_max=request.get("rh_max_ohmm", 1000.0),
-                    max_nfev=nfev)
+                    max_nfev=nfev, anisotropy_from_phase=ANISOTROPY_FROM_PHASE)
     lines = request.get("lines") or []
     dip_sigma = request.get("dip_sigma_deg", DEFAULT_DIP_SIGMA_DEG)
     boundary_sigma = request.get("boundary_sigma_ft", DEFAULT_BOUNDARY_SIGMA_FT)
@@ -522,7 +551,6 @@ def run_inversion(run, request: dict, plan: dict, job: Job | None = None, base: 
     if not models:
         raise ValueError(f"no slice had {MIN_WINDOW_STATIONS} stations in its {window_ft:g} ft data window; "
                          "use a smaller station step or a wider window")
-    obs = np.where(data.valid if data.valid is not None else True, data.obs, np.nan)
     combined = SimpleNamespace(pred=pred, residual=obs - pred, nfev=total_nfev, model=None)
     out = serialize(data, combined, w, sigma, lc, time.time() - t0, used,
                     model=summary_model(data, models, owner))
@@ -719,7 +747,7 @@ def section_preview(run, request: dict) -> dict:
     used = {e["label"]: e for e in plan["used"]}
     sources = {lab: plan["_sources"].get(lab, lab) for lab in labels}
     data = interval_from_run(run, request["md_min_ft"], request["md_max_ft"], fwd, request["step_ft"],
-                             sources, required=list(used))
+                             sources, required=_weighted(used), require="any")
     curves = []
     for j, lab in enumerate(labels):
         if lab not in used:
@@ -733,6 +761,11 @@ def section_preview(run, request: dict) -> dict:
     return {"run": request["run"], "well": data.well, "md_ft": _none(data.md_ft), "tvd_ft": _none(data.tvd_ft),
             "inclination_deg": _none(np.rad2deg(np.arccos(np.clip(data.traj.axis[:, 2], -1, 1)))),
             "stations": int(len(data.md_ft)), "curves": curves}
+
+
+def _weighted(used: dict) -> list[str]:
+    """Labels that carry weight in the fit (a station needs at least one of them); all used labels if none do."""
+    return [lab for lab, e in used.items() if e["weight"] > 0] or list(used)
 
 
 def slice_centres(md_min: float, md_max: float, slice_ft: float) -> np.ndarray:

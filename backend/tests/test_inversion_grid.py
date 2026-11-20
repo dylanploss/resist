@@ -54,18 +54,30 @@ def test_expand_product_and_qc_curves():
 
 
 def test_demo_grid_first_point_is_the_stored_vc2_request():
-    """The demo grid's first point is the committed VC-2 17202-17322 ft request (same request_key: a cache hit at
-    the same INVERSION_VERSION, otherwise the new result supersedes it)."""
+    """The demo grid's first point is the committed VC-2 17202-17322 ft request (a cache hit at the same
+    INVERSION_VERSION, otherwise the new result supersedes it)."""
     import json
     from backend.inversion import graph_io, service
     from backend.inversion.api import InversionRequest
     from backend.services import runs
     spec = json.loads((ROOT / "infra/vm/grids/demo.json").read_text())
-    stored = {r.get("request_key") for r in graph_io.read_snapshot(ROOT / "data/graph/inversions.json")}
+    records = graph_io.read_snapshot(ROOT / "data/graph/inversions.json")
     req = dict(spec["runs"][0], intervals=spec["runs"][0]["intervals"][:1])
     pts = run_grid.expand({**spec, "runs": [req]}, runs.run_paths().keys(), runs.get_run,
                           lambda rid: __import__("backend.qc.selection", fromlist=["x"]).select_curves(
                               runs.get_run(rid))["selected"])
     request = InversionRequest(**pts[0]).model_dump(exclude={"force"})
-    plan = service.build_plan(runs.get_run(request["run"]), request["curves"], request["calibration"])
-    assert service.fingerprint(request["run"], request, plan)[1] in stored
+    mine = service.canonical_request(request["run"], request)
+    assert any(r["run"] == request["run"] and service.canonical_request(r["run"], r["request"]) == mine
+               for r in records)
+
+
+def test_request_key_ignores_weights_but_fingerprint_does_not():
+    """A code change that re-weights channels must still supersede the old result (same request_key)."""
+    from backend.inversion import service
+    request = {"curves": ["ARH16P"], "md_min_ft": 100.0, "md_max_ft": 200.0}
+    plan = {"used": [{"label": "ARH16P", "weight": 1.0}]}
+    reweighted = {"used": [{"label": "ARH16P", "weight": 0.5}]}
+    fp, key = service.fingerprint("run", request, plan)
+    fp2, key2 = service.fingerprint("run", request, reweighted)
+    assert key == key2 and fp != fp2

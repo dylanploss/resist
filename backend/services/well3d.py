@@ -192,7 +192,8 @@ def doi_profile(data: WellRun, row: dict, idx: np.ndarray, md_ft: np.ndarray) ->
     source = _reference_resistivity(data, row)
     if source is None:
         return None
-    raw = np.asarray(data.curves[source], dtype=float)
+    # Clipped samples (missing for the inversion) are the most resistive ones: they keep the deepest reach.
+    raw = np.asarray(_display(data, source), dtype=float)
     rho = np.where(raw > 0, raw, np.nan)
     # Same 2nd-98th percentile clip as the colour scale, so a redder bin always reads deeper.
     low, high = _percentile(rho.ravel(), 0.02), _percentile(rho.ravel(), 0.98)
@@ -210,6 +211,11 @@ def doi_profile(data: WellRun, row: dict, idx: np.ndarray, md_ft: np.ndarray) ->
         picked = ring
     doi = doi_metres(picked, row["frequency_hz"], row["spacing_in"], row["measurement"])
     return {"doi_m": doi, "source": source}
+
+
+def _display(data: WellRun, name: str) -> np.ndarray:
+    """Curve values for display, clipped samples at the clip limit (``WellRun.display_values``)."""
+    return data.display_values(name) if hasattr(data, "display_values") else data.curves[name]
 
 
 def _row_mean(values: np.ndarray) -> np.ndarray:
@@ -236,7 +242,7 @@ def well3d(data: WellRun, curve: str, start_ft: float | None = None, end_ft: flo
         raise UnknownCurveError(f"unknown curve {curve} in {data.path.stem}")
     path = well_path(data)
     idx, stride = window_indices(path["md_ft"], start_ft, end_ft, max_points, path["valid"])
-    raw = data.curves[curve]
+    raw = _display(data, curve)
     row = data.metadata.set_index("curve").loc[curve].to_dict()
     unit = row["unit"]
     doi, tier = curve_doi(row)

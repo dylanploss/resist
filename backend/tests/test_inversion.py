@@ -8,16 +8,44 @@ from backend.inversion.invert import FitConfig, Inverter, IntervalData
 
 class ForwardTests(unittest.TestCase):
     def test_homogeneous_transform_recovers_resistivity(self):
-        fwd = ADRForward()
+        fwd = ADRForward(dielectric=False)        # transform and earth share epsilon_r = 1
         for rho in (2.0, 20.0, 200.0):
             rp, ra = fwd.simulate_homogeneous(rho, rho, 1.0)
             np.testing.assert_allclose(rp, rho, rtol=2e-3)
             np.testing.assert_allclose(ra, rho, rtol=2e-3)
 
     def test_high_angle_anisotropy_separates_phase_above_attenuation(self):
-        rp, ra = ADRForward().simulate_homogeneous(9.0, 18.0, np.cos(np.deg2rad(86)))
+        rp, ra = ADRForward(dielectric=False).simulate_homogeneous(9.0, 18.0, np.cos(np.deg2rad(86)))
         self.assertTrue(np.all(rp > ra))
         self.assertTrue(np.all(ra > 9.0))
+
+    def test_dielectric_effect_reproduces_the_z20_attenuation_bias(self):
+        """Earth permittivity from the resistivity relation, transform at epsilon_r = 1: at 10 ohm-m 2 MHz attenuation
+        reads 8-20 % high (the Z-20 study measured 13-21 %, shorter spacings most), phase within 5 %, and the
+        effect fades at low frequency."""
+        from backend.inversion.adr_forward import permittivity
+
+        self.assertAlmostEqual(float(permittivity(10.0)), 108.5 * 10 ** -0.35 + 5)
+        fwd = ADRForward()
+        names = [c.name for c in fwd.channels]
+        rp, ra = fwd.simulate_homogeneous(10.0, 10.0, 1.0)
+        high = [names.index(n) for n in ("ARH16", "ARH32", "ARH48")]
+        self.assertTrue(np.all((ra[high] > 10.8) & (ra[high] < 12.0)))
+        self.assertTrue(np.all(np.diff(ra[high]) < 0))             # shorter spacing, larger effect
+        np.testing.assert_allclose(rp, 10.0, rtol=0.05)
+        self.assertLess(ra[names.index("ARL48")], ra[names.index("ARH48")])
+        # transform_eperm equal to the earth's permittivity cancels the effect again
+        same = ADRForward(transform_eperm=float(permittivity(10.0)))
+        np.testing.assert_allclose(same.simulate_homogeneous(10.0, 10.0, 1.0)[1], 10.0, rtol=5e-3)
+
+    def test_vertical_permittivity_follows_rv(self):
+        fwd = ADRForward()
+        kw = fwd._eperm([4.0], [np.sqrt(16.0 / 4.0)])
+        from backend.inversion.adr_forward import permittivity
+        np.testing.assert_allclose(kw["epermH"], permittivity(4.0))
+        np.testing.assert_allclose(kw["epermV"], permittivity(16.0))
+        self.assertEqual(ADRForward(dielectric=False)._eperm([4.0, 9.0], [1.0, 1.0]), {"epermH": [1.0, 1.0],
+                                                                                         "epermV": [1.0, 1.0]})
 
     def test_tool_straddling_a_boundary_is_finite_and_continuous(self):
         # empymod returns NaN when a transmitter is in a deeper layer than a receiver; reciprocity fills those pairs.
@@ -81,8 +109,8 @@ class PlanTests(unittest.TestCase):
         self.assertEqual((used["ARH16P"]["curve"], used["ARH16P"]["weight"]), ("ARH16PC", 1.0))
         self.assertIn("same channel as ARH16PC", reasons["ARH16P"])
         self.assertEqual(used["ARH16A"]["weight"], 0.5)
-        self.assertIsNotNone(used["ARH16A"]["correction"])
-        self.assertEqual(used["ARM32A"]["weight"], 0.25)
+        self.assertIsNone(used["ARH16A"]["correction"])           # the dielectric model replaced the Z-20 table
+        self.assertEqual(used["ARM32A"]["weight"], 0.0)           # 500/125 kHz attenuation: QC only
         # An image gives top and bottom 90-degree sectors of the image itself, for every run.
         self.assertEqual(plan["_sources"]["ZRH16PT"], ("ZRH16P", "T"))
         self.assertEqual(plan["_sources"]["ZRH16PB"], ("ZRH16P", "B"))
@@ -140,11 +168,18 @@ class DirectionalForwardTests(unittest.TestCase):
         return [dict(zip(self.labels, row)) for row in self.fwd.predict(model, self.horizontal(np.array(z)))]
 
     def test_homogeneous_has_equal_bins_and_zero_geosignal(self):
-        (v,) = self.values(LayerModel(np.array([]), np.array([10.0]), np.array([10.0])), [0.0])
+        model = LayerModel(np.array([]), np.array([10.0]), np.array([10.0]))
+        plain = ADRForward(azimuthal=True, dielectric=False)
+        v = dict(zip(self.labels, plain.predict(model, self.horizontal(np.array([0.0])))[0]))
         for lab in ("ARH16P", "ZRH16PT", "ZRH16PB", "ZRL48AT", "ZRM50PT", "ZRL82PB"):
             self.assertAlmostEqual(10 ** v[lab], 10.0, delta=0.02)
-        for lab in (k for k in v if k.startswith("ZG")):
+        # With the dielectric effect a homogeneous earth still reads the same in every direction.
+        (d,) = self.values(model, [0.0])
+        for lab in (k for k in d if k.startswith("ZG")):
             self.assertAlmostEqual(v[lab], 0.0, places=6, msg=lab)
+            self.assertAlmostEqual(d[lab], 0.0, places=6, msg=lab)
+        for top in (k for k in d if k.startswith("ZR") and k.endswith("T")):
+            self.assertAlmostEqual(d[top], d[top[:-1] + "B"], places=6, msg=top)
 
     def test_spec_geometry_uses_the_six_transmitters_and_r3(self):
         from backend.inversion.adr_forward import R3_IN

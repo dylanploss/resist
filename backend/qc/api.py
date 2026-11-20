@@ -41,8 +41,11 @@ def _load(run: str):
 
 
 @lru_cache(maxsize=32)
-def _qc(run: str, n_select: int) -> dict:
-    return select_curves(_load(run), n_select)
+def _qc(run: str, n_select: int, start_ft: float | None = None, end_ft: float | None = None) -> dict:
+    try:
+        return select_curves(_load(run), n_select, start_ft, end_ft)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _to_list(values: np.ndarray) -> list:
@@ -51,9 +54,11 @@ def _to_list(values: np.ndarray) -> list:
 
 
 @router.get("/runs/{run}/qc")
-def run_qc(run: str, n_select: int = Query(DEFAULT_SELECT, ge=SELECT_RANGE[0], le=SELECT_RANGE[1])) -> dict:
+def run_qc(run: str, n_select: int = Query(DEFAULT_SELECT, ge=SELECT_RANGE[0], le=SELECT_RANGE[1]),
+           start_ft: float | None = None, end_ft: float | None = None) -> dict:
+    """QC auto-pick; ``start_ft``/``end_ft`` limit the scoring (and the clipped-curve check) to an MD interval."""
     _path(run)
-    return _qc(run, n_select)
+    return _qc(run, n_select, start_ft, end_ft)
 
 
 @router.get("/runs/{run}/curves/{name}")
