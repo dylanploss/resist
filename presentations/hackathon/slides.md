@@ -7,11 +7,13 @@ transition: slide-left
 mdc: true
 ---
 
+<img src="/logo.png" class="mx-auto h-40 pb-4" alt="Dylan David Ove logo" />
+
 # Resist
 
 Resistivity QC and inversion platform for the Ekofisk well data
 
-<div class="pt-8 text-sm opacity-70">
+<div class="pt-6 text-sm opacity-70">
 Hackathon demo · 20 November 2026 · 14:00
 </div>
 
