@@ -11,6 +11,12 @@ Physics assumptions (none of these are vendor-confirmed; see docs/inversion/HACK
 * Apparent resistivity uses a homogeneous isotropic whole-space transform with the same geometry.
   The vendor transform includes mandrel, borehole and calibration effects we cannot reproduce,
   which is why ``backend.inversion.invert`` supports per-channel correction factors.
+* Dielectric effect: every layer gets a relative permittivity from the resistivity-permittivity relation
+  ``permittivity`` (epermH from Rh, epermV from Rv), while the apparent-resistivity transform assumes
+  ``transform_eperm`` (1 by default). With those, the model reproduces the empirical Z-20 2 MHz attenuation
+  correction it replaces (attenuation reading 9-18 % high at 10 ohm-m against the 13-21 % measured) and predicts the
+  500/125 kHz effect, which no empirical table transferred between intervals. ``dielectric=False`` restores the
+  old non-dielectric (epsilon_r = 1 everywhere) model.
 
 Units: metres and ohm-m internally. Trajectory inputs use the delivered DLIS curves
 (MD/TVD in ft, INC/AZI in degrees, UTM in m).
@@ -28,6 +34,12 @@ from backend.data.quadrants import BINS, CENTRE, SECTOR
 FT = 0.3048
 INCH = 0.0254
 HTARG = {"dlf": "key_201_2012"}
+
+
+def permittivity(rho):
+    """Relative permittivity from resistivity (ohm-m): ``108.5 * rho**-0.35 + 5``, the resistivity-permittivity
+    relation commonly assumed for 2 MHz / 400 kHz propagation tools (about 79 at 3 ohm-m, 54 at 10, 27 at 100)."""
+    return 108.5 * np.asarray(rho, float) ** -0.35 + 5.0
 
 
 def _bipole(src, rec, **kw):
@@ -149,6 +161,8 @@ class ADRForward:
     zg_sides: tuple = ("T",)
     rotation: int = 1
     rho_grid: np.ndarray = field(default_factory=lambda: np.logspace(-1, 3.3, 260))
+    dielectric: bool = True             # earth permittivity from ``permittivity``; False: epsilon_r = 1
+    transform_eperm: float = 1.0        # permittivity the apparent-resistivity transform assumes
 
     def __post_init__(self):
         geo_f = {g.frequency_hz for g in self.geosignals} if self.azimuthal else set()
@@ -183,8 +197,21 @@ class ADRForward:
                 for lab in self.channel_labels()]
 
     # ------------------------------------------------------------------ raw responses
-    def _raw(self, depth, res, aniso, zc, cos_rel):
-        """Compensated (phase deg, atten dB) for all channels at one station."""
+    def _eperm(self, res, aniso, eperm=None):
+        """empymod ``epermH``/``epermV`` keyword arguments for layers ``res`` (Rh) with ``aniso`` = sqrt(Rv/Rh)."""
+        if eperm is not None:
+            h = v = [float(eperm)] * len(res)
+        elif not self.dielectric:
+            h = v = [1.0] * len(res)
+        else:
+            rh = np.asarray(res, float)
+            h = permittivity(rh).tolist()
+            v = permittivity(rh * np.asarray(aniso, float) ** 2).tolist()
+        return {"epermH": h, "epermV": v}
+
+    def _raw(self, depth, res, aniso, zc, cos_rel, eperm=None):
+        """Compensated (phase deg, atten dB) for all channels at one station. ``eperm`` overrides the layer
+        permittivity with one value (the transform tables use ``transform_eperm``)."""
         sin_rel = np.sqrt(max(0.0, 1.0 - cos_rel * cos_rel))
         dip = np.rad2deg(np.arcsin(np.clip(cos_rel, -1, 1)))
 
@@ -193,7 +220,7 @@ class ADRForward:
             return [off * sin_rel, np.zeros(n), zc + off * cos_rel, np.zeros(n), np.full(n, dip)]
 
         h = _bipole(pts(self.tx_offsets), pts(self.rx_offsets), depth=list(depth), res=list(res),
-                    freqtime=self.freqs, aniso=list(aniso), verb=0, htarg=HTARG)
+                    freqtime=self.freqs, aniso=list(aniso), verb=0, htarg=HTARG, **self._eperm(res, aniso, eperm))
         h = np.conj(h)  # e^{-iwt}
         ns = len(self.spacings)
         out_p, out_a = [], []
@@ -210,7 +237,7 @@ class ADRForward:
     def _angles(v):
         return np.rad2deg(np.arctan2(v[..., 1], v[..., 0])), np.rad2deg(np.arcsin(np.clip(v[..., 2], -1, 1)))
 
-    def _raw_azimuthal(self, depth, res, aniso, zc, t_f, h_f, polarity):
+    def _raw_azimuthal(self, depth, res, aniso, zc, t_f, h_f, polarity, eperm=None):
         """Phase/attenuation of the averaged receiver ``(n_chan,)``, of all 32 compensated bins ``(32, n_chan)`` and of
         all 32 uncompensated long-spacing bins ``(32, n_long)``, plus geosignals ``(32, n_geo, 2)`` at one station.
 
@@ -250,7 +277,8 @@ class ADRForward:
 
         rx = [(o, d) for o in rx_off for d in axes]
         v = _bipole(points(tx_off, [t_f] * len(tx_off)), points([o for o, _ in rx], [d for _, d in rx]),
-                    depth=list(depth), res=list(res), freqtime=self.freqs, aniso=list(aniso), verb=0, htarg=HTARG)
+                    depth=list(depth), res=list(res), freqtime=self.freqs, aniso=list(aniso), verb=0, htarg=HTARG,
+                    **self._eperm(res, aniso, eperm))
         v = np.conj(v.reshape(len(self.freqs), len(rx_off), 3, len(tx_off)))
         # Bin k spans [k, k+1) x 11.25 deg, so a sector is centred on its quadrant; "bin" mode looks exactly at 0/180 deg.
         psi = 2 * np.pi * (np.arange(BINS) + (0.0 if self.quadrant == "bin" else 0.5)) / BINS
@@ -307,7 +335,7 @@ class ADRForward:
         if self._tables is None:
             ph, at = [], []
             for r in self.rho_grid:
-                p, a = self._raw([], [r], [1.0], 0.0, 1.0)
+                p, a = self._raw([], [r], [1.0], 0.0, 1.0, eperm=self.transform_eperm)
                 ph.append(p); at.append(a)
             self._tables = (np.array(ph), np.array(at))   # (n_rho, n_chan), both decrease with rho
         return self._tables
@@ -330,7 +358,7 @@ class ADRForward:
             t_f, h_f = np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
             ph, at = [], []
             for r in self.rho_grid:
-                _, _, (lp, la), _ = self._raw_azimuthal([], [r], [1.0], 0.0, t_f, h_f, 1)
+                _, _, (lp, la), _ = self._raw_azimuthal([], [r], [1.0], 0.0, t_f, h_f, 1, eperm=self.transform_eperm)
                 ph.append(lp[0]); at.append(la[0])               # homogeneous: every bin reads the same
             self._ls_tables = (np.array(ph), np.array(at))
         return self._ls_tables

@@ -21,8 +21,7 @@ import numpy as np
 
 from backend.inversion import service
 from backend.inversion.adr_forward import FT, ADRForward
-from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
-                                      default_starts, interval_from_run, noise_estimate)
+from backend.inversion.invert import FitConfig, Inverter, default_starts, interval_from_run, noise_estimate
 
 SIDES = ("T", "R", "B", "L")
 GEO_SIDES = ("T", "R", "L")     # bin minus the all-bin mean: bottom tracks top, but right and left differ off-axis
@@ -33,8 +32,6 @@ DEFAULT_MAX_DIP_DEG = 45.0
 MAX_INTERVAL_FT = 1000.0
 MAX_WINDOWS = 30
 MIN_STATIONS = 6
-ATTENUATION_CORRECTION = {**service.ATTENUATION_CORRECTION,
-                          **{f"ZR{lab[2:]}{s}": v for lab, v in Z20_ATTENUATION_CORRECTION.items() for s in SIDES}}
 
 
 def forward_options(rotation: int = 1) -> dict:
@@ -121,7 +118,7 @@ def _execute(job: service.Job, run) -> None:
 # ---------------------------------------------------------------------------- inversion
 def _normalised_misfit(residual, sigma, weights):
     cols = np.flatnonzero(weights > 0)
-    return float(np.sqrt(np.mean((residual[:, cols] / sigma[cols]) ** 2))) if cols.size else float("nan")
+    return float(np.sqrt(np.nanmean((residual[:, cols] / sigma[cols]) ** 2))) if cols.size else float("nan")
 
 
 def remove_lateral_offset(data, labels, used) -> dict:
@@ -155,11 +152,10 @@ def run_facets(run, request: dict, plan: dict, job: service.Job | None = None) -
     used = {e["label"]: e for e in plan["used"]}
     sources = {lab: plan["_sources"].get(lab, lab) for lab in labels}
     data = interval_from_run(run, request["md_min_ft"], request["md_max_ft"], fwd, request["step_ft"], sources,
-                             required=list(used))
+                             required=service._weighted(used), require="any")
     offsets = remove_lateral_offset(data, labels, used) if request.get("remove_lateral_offset", True) else {}
     weights = np.array([used[lab]["weight"] if lab in used else 0.0 for lab in labels])
-    lc = LevelCorrection.from_table(labels, {lab: ATTENUATION_CORRECTION[lab] for lab in used
-                                             if lab in ATTENUATION_CORRECTION}) if plan["calibration"] else None
+    lc = None   # the dielectric forward model replaced the empirical Z-20 attenuation correction
     centres = window_centres(float(data.md_ft[0]), float(data.md_ft[-1]), request["window_ft"])
     if len(centres) > MAX_WINDOWS:
         raise ValueError(f"{len(centres)} windows exceed {MAX_WINDOWS}; shorten the interval or widen the windows")
@@ -186,12 +182,12 @@ def run_facets(run, request: dict, plan: dict, job: service.Job | None = None) -
             continue
         sub = data.subset(mask)
         sigma = np.array([service.SIGMA_FLOOR[u] if lab.startswith("AR")
-                          else noise_estimate(sub.obs[:, j], service.SIGMA_FLOOR[u])
+                          else noise_estimate(sub.masked_obs()[:, j], service.SIGMA_FLOOR[u])
                           for j, (lab, u) in enumerate(zip(labels, sub.units))])
         cfg = FitConfig(n_layers=k, azimuthal=True, fit_dip=True, fit_cross_dip=True, forward_options=opts,
                         dip_limit_deg=request.get("max_dip_deg", DEFAULT_MAX_DIP_DEG),
                         curve_weights=dict(zip(labels, weights)), curve_sigma=dict(zip(labels, sigma)),
-                        level_correction=lc, max_nfev=nfev)
+                        level_correction=lc, max_nfev=nfev, anisotropy_from_phase=service.ANISOTROPY_FROM_PHASE)
         with Inverter(sub, cfg, workers=service.WORKERS, on_eval=tick) as inv:
             res = inv.fit(x_prev) if x_prev is not None else None
             if res is None or _normalised_misfit(res.residual, sigma, weights) > 3:

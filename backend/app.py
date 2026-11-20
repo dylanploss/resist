@@ -24,6 +24,7 @@ from backend.inversion.api import router as inversion_router
 from backend.inversion.facets_api import router as facets_router
 from backend.inversion import service as inversion_service
 from backend.inversion import store as inversion_store
+from backend.inversion.invert import shutdown_pools
 
 app = FastAPI(title="Resist backend")
 app.add_middleware(
@@ -41,6 +42,15 @@ app.include_router(facets_router)
 def _warm_store() -> None:
     # Resolve the Cosmos key (env/.env or az login) and connect off the event loop; requests wait for it.
     threading.Thread(target=inversion_store.get_store, name="store-init", daemon=True).start()
+
+
+@app.on_event("shutdown")
+def _stop_inversion_workers() -> None:
+    # A job's process pool would otherwise outlive the server and keep its memory (workers also exit on their own
+    # when this process dies without shutting down; see backend.inversion.invert.worker_pool).
+    stopped = shutdown_pools()
+    if stopped:
+        logging.getLogger("resist").info("stopped %d inversion worker process(es)", stopped)
 
 
 def error(status: int, message: str) -> JSONResponse:

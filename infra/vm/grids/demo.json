@@ -4,7 +4,8 @@
   "step_ft": 4.0,
   "quick": false,
   "runs": [
-    {"run": "VC-2", "intervals": [[17202, 17322], [17322, 17442], [17442, 17562]]},
+    {"run": "VC-2", "intervals": [[17202, 17322], [17322, 17442], [17442, 17562]],
+     "curves": ["ARM16PC", "ZRH32AB", "ZRH48A", "ZRH48PB", "ZRL48PB", "ZRM32P", "ZRM48A", "ZRM48P"]},
     {"run": "Z-20", "intervals": [[20100, 20500]]}
   ]
 }

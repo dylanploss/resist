@@ -24,7 +24,7 @@ One row per depth sample per curve. Produced by the loader in `backend/data/load
 | `unit` | string | Unit as stored in the DLIS file |
 | `depth_ref` | string | Depth reference (for example `MD`) |
 | `depth_m` | float | Depth in metres |
-| `value` | float or null | Curve value; null where the file null value is found |
+| `value` | float or null | Curve value; null where the file null value is found, and for AR/ZR resistivities at the tool clip limit (≥ 1999 ohm-m: the 2000/5000 ohm-m values, and `C` samples whose uncorrected twin is clipped) |
 
 Curve metadata table, one row per curve:
 
@@ -57,6 +57,7 @@ Rules:
 - Every curve in the inventory appears in exactly one of `selected` or `rejected`.
 - `scores` covers every curve in the inventory. `noise` is jaggedness: below 0.5 smooth, 1 white noise.
 - `warnings` lists noisy curves kept as deep fallbacks and depth tiers with no usable curve.
+- `clipped` in `scores` is the fraction of delivered samples at the tool clip limit; a curve clipped on more than 50 % of its samples in the scored interval is rejected as "mostly clipped". `GET /runs/{run}/qc` takes optional `start_ft`/`end_ft` to score an MD interval (default: the whole run); `md_min_ft`/`md_max_ft` in the result give the interval used.
 
 ## Endpoints
 
@@ -69,7 +70,7 @@ Implemented in `backend/app.py` (data and QC), `backend/qc/api.py` (QC visualiza
 | GET | `/curves` | query `run` (required) | `{"run", "well", "curves": [<curve metadata rows>]}` |
 | GET | `/curves/{run}/data` | query `curves=A,B` (required) | `{"run", "well", "depth_m": [..], "curves": {"A": {"unit", "bins", "values": [..]}}}` |
 | POST | `/qc/select` | `{"run": "<id>", "n_select": 8}` | QC selection JSON above |
-| GET | `/runs/{run}/qc` | query `n_select` (default 8) | QC selection JSON above for that run |
+| GET | `/runs/{run}/qc` | query `n_select` (default 8), optional `start_ft`, `end_ft` | QC selection JSON above for that run |
 | GET | `/runs/{run}/curves/{name}` | query `start_ft`, `end_ft`, `max_points` (default 1500, 50 to 20000) | `{"run", "curve", "unit", "family", "image", "stride", "md_ft", "values"}` |
 | GET | `/runs/{run}/well3d` | query `curve` (required), `start_ft`, `end_ft`, `max_points` (default 4000, 100 to 20000) | `{"run", "well", "curve", "unit", "image", "bins", "stride", "path_source", "origin", "color", "doi_index", "doi_tier", "doi_m", "doi_source", "md_ft", "tvd_ft", "inc_deg", "azi_deg", "x_m", "y_m", "z_m", "values"}` |
 | GET | `/field` | query `max_points` per run (default 300, 50 to 2000) | `{"centre": {"east_m", "north_m"}, "color", "runs": [{"run", "well", "path_source", "stride", "md_range_ft", "curve", "md_ft", "east_m", "north_m", "tvd_m", "values"}], "skipped": [{"run", "reason"}]}` |
@@ -83,7 +84,7 @@ Implemented in `backend/app.py` (data and QC), `backend/qc/api.py` (QC visualiza
 
 Details:
 - `/runs` reads only DLIS headers. `label` is the run id without `_RES_GEOSIGNAL`. `well` and the depth range are null if the header is unreadable, and the entry then has an `error` field.
-- `/curves` rows contain the four metadata columns above plus the loader columns `well`, `run`, `depth_ref`, `sample_count`, `bins`, `depth_min_m`, `depth_max_m`, `valid_fraction`, `nonpositive_count`, and the mnemonic fields from `measurement_metadata`: `family` (`AR`, `ZR`, `ZG` or `conventional`), `frequency_hz`, `spacing_in`, `measurement`, `suffix`, `geometry_status`. Mnemonic fields are null for conventional curves.
+- `/curves` rows contain the four metadata columns above plus the loader columns `well`, `run`, `depth_ref`, `sample_count`, `bins`, `depth_min_m`, `depth_max_m`, `valid_fraction`, `nonpositive_count`, `clipped_count`, `clipped_fraction`, and the mnemonic fields from `measurement_metadata`: `family` (`AR`, `ZR`, `ZG` or `conventional`), `frequency_hz`, `spacing_in`, `measurement`, `suffix`, `geometry_status`. Mnemonic fields are null for conventional curves.
 - `/curves/{run}/data` returns one value per depth for scalar curves (`bins` 1) and a list of 32 bin values per depth for image curves (`bins` 32). Null-sentinel and non-finite samples are `null`.
 - `/qc/select` and `/runs/{run}/qc`: `n_select` defaults to 8 and must be within 5 to 10.
 - `/runs/{run}/curves/{name}` returns every `stride`th sample (thinned, not averaged) between `start_ft` and `end_ft`; images are returned as 32 bins x depth.
@@ -104,8 +105,9 @@ Details:
   - `AR` curves are used as averages; a `C` curve uses the vendor-corrected data.
   - A `ZR` image at 16/32/48 in contributes its top and bottom quadrants, extracted from the image as 90° sectors (`backend/data/quadrants.py`) in every run. Selecting `ZR..T`/`ZR..B` directly uses the image sector, or the delivered curve when the run lacks the image.
   - A `ZG` image contributes its top quadrant sector.
-  - Phase has weight 1. With `calibration` on, 2 MHz attenuation (averaged and top/bottom) has weight 0.5 and the Z-20 resistivity-dependent correction, and 500/125 kHz attenuation has weight 0.25.
-  - Left/right bins, `ZR` 50/66/82 in images and conventional curves are listed under `ignored` with a reason.
+  - Phase has weight 1. With `calibration` on, 2 MHz attenuation (averaged and top/bottom) has weight 0.5 and 500/125 kHz attenuation weight 0 (shown for QC only). `correction` is always null: the forward model includes the dielectric effect (`backend/inversion/adr_forward.permittivity`), which replaced the Z-20 attenuation correction. Rv/Rh is fitted to phase only.
+  - In VC-2 the 16 in 2 MHz resistivity channels (AR and ZR) get weight 0 and a `well_note`, with a plan warning.
+  - Left/right bins and conventional curves are listed under `ignored` with a reason.
   - `azimuthal` is true when directional channels are used.
 - Inversion target: the request may carry `"target": "local"` (default) or `"server"`. Like `force`, it is not part of the fingerprint (same request, same result wherever it runs). With `"server"`, a stored result is still returned at once; otherwise the request (without `target`) is forwarded to `<url>/inversion/jobs` on the inversion server and a local proxy job (same id) mirrors it: each `GET /inversion/jobs/{id}` polls the server for `status`, `progress`, `message` and `partial`, and on `done` the result is saved into the local store too. Server down, a rejected request or a failed remote job end the job in `error` with the reason. Jobs carry `"target"`. The URL comes from `RESIST_INVERSION_SERVER_URL` or `backend/inversion_server.json` (`{"url": null}` = no server); `/inversion/targets` reports it with a `GET <url>/health` check (2 s timeout, cached 30 s).
 - Jobs run one at a time in a background thread (status `queued` → `running` → `done` or `error`). Jobs are kept in memory only. `result` holds:
