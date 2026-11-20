@@ -4,3 +4,7 @@ numpy
 pandas
 matplotlib
 ipywidgets
+
+# Claude API
+anthropic
+python-dotenv

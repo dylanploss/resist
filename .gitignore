@@ -27,3 +27,11 @@ out/
 
 # Inversion snapshot: committed; temp files from the atomic write are not
 data/graph/.inversions-*.tmp
+
+# Office lock files (open decks)
+~$*
+
+# Inversion grid run logs and scratch
+logs/grid/*.log
+logs/grid/qc30_start.txt
+logs/grid/all_runs_dryrun.json

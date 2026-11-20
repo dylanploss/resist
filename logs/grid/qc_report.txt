@@ -1,0 +1,332 @@
+13 current inversions, 6 runs, 406 slices
+
+== Per inversion ==
+inversion                                  slices used misfit slice med    >2   rms%   inc
+VB-5_H (13255-17430) 15362-15402 #0f92         10   11   1.28      1.29    0%    6.4    88
+VC-1_H (11410-15238) 13290-13330 #c3f9         10   11   1.90      1.77   30%   18.3    94
+VC-2_Y3H (16634-17888) 17202-17322 #201b       30   12   1.74      1.62   17%   10.9    88
+VC-2_Y3H (16634-17888) 17235-17275 #0252       10   12   1.54      1.54    0%    8.7    88
+VC-2_Y3H (16634-17888) 17322-17442 #32bc       30   12   2.52      2.42   60%   32.7    90
+VC-2_Y3H (16634-17888) 17442-17562 #c8c3       30   12   2.07      1.92   37%   13.2    91
+VC-3_H (11330-15215) 13250-13290 #87dd         10    9  14.16      9.32   90%  127.3    88
+Z-19_18580 (18580-24394) 21460-21500 #8b91     10   12   1.73      1.79   40%    8.4    91
+Z-20_18840 (18840-23791) 20100-20500 Q #2b    100   12   4.05      2.58   80%   25.4    86
+Z-20_18840 (18840-23791) 20200-20260 Q #2f      8   15   1.35      1.38    0%    6.4    85
+Z-20_18840 (18840-23791) 20200-20260 Q #91      8   15   1.22      1.27    0%    6.0    85
+Z-20_18840 (18840-23791) 20200-20500 Q #48     75   14   2.36      2.22   59%   15.3    87
+Z-20_18840 (18840-23791) 20200-20500 Q #b9     75   14   3.72      2.95   79%   23.9    87
+
+== Fitted curves: bias per curve across runs (+ = tool reads above model; bias/rms in sigma units) ==
+curve        meas      kind runs  bias%   bias    rms  sign  flag
+ZRM66PT     phase       top    4   -4.4  -1.35   2.03  100%  SYSTEMATIC
+ARH32A     attenu       avg    2   15.4   9.17  19.27  100%  
+ZGM48PT     phase geosignal    2      -  -6.05  10.06  100%  
+ARH48A     attenu       avg    1    8.8   1.82   2.15  100%  
+ZRH32PB     phase    bottom    1   -7.9  -1.79   2.41  100%  
+ZRL48PT     phase       top    1   10.7   1.46   2.08  100%  
+ZRM48AB    attenu    bottom    2   15.7   1.27   2.87   50%  
+ZRM32PT     phase       top    2    5.2   1.20   1.77  100%  
+ARM32P      phase       avg    1    5.4   1.13   1.28  100%  
+ARM48P      phase       avg    2    9.5   1.10   1.29  100%  
+ZRM48AT    attenu       top    2    8.2   1.03   2.30   50%  
+ZRM50PB     phase    bottom    4   -5.0  -0.95   2.01   75%  
+ZRL66PT     phase       top    1   -4.8  -0.94   1.78  100%  
+ZRL48PB     phase    bottom    2    1.6   0.83   1.90   50%  
+ZRH32AB    attenu    bottom    3    9.2   0.82   2.13  100%  
+ZGL48PT     phase geosignal    1      -  -0.71   2.24  100%  
+ZRM50PT     phase       top    4   -6.2  -0.68   1.90   75%  
+ZGM112PT    phase geosignal    4      -   0.68   1.92  100%  
+ZRL66PB     phase    bottom    1   -3.9  -0.55   1.92  100%  
+ZRH48AB    attenu    bottom    1   -2.2  -0.43   1.48  100%  
+ARH16A     attenu       avg    1    1.8   0.38   0.49  100%  
+ARL48P      phase       avg    1    1.6   0.35   0.68  100%  
+ZRM48PT     phase       top    2    1.8   0.34   1.10  100%  
+ZRH48PB     phase    bottom    1    3.1   0.33   1.11  100%  
+ZRM82PB     phase    bottom    3    1.5   0.24   1.29   67%  
+ZRM82PT     phase       top    3   -1.1   0.23   1.18   67%  
+ZGM112AT   attenu geosignal    3      -  -0.20   2.58   67%  
+ZRH48AT    attenu       top    1   -1.7  -0.19   1.54  100%  
+ARM16P      phase       avg    6    0.4  -0.19   2.04   50%  
+ZRM48PB     phase    bottom    2   -0.4  -0.11   0.74  100%  
+ZRM32PB     phase    bottom    2    3.1  -0.10   0.99   50%  
+ZRM66PB     phase    bottom    4   -0.8  -0.10   1.93   50%  
+ZRH32AT    attenu       top    2    0.8   0.06   1.74   50%  
+
+   roll-up by family (fitted): median over runs of each run's median bias%
+   meas         freq  spc runs  median%    min%    max%  sign
+   attenuation     H   16    1      1.8     1.8     1.8  100%
+   attenuation     H   32    5      7.6     3.7   107.1  100%
+   attenuation     H   48    2      3.4    -1.9     8.8   50%
+   attenuation     M   48    2      5.9    -3.8    15.7   50%
+   phase           H   32    1     -7.9    -7.9    -7.9  100%
+   phase           H   48    1      3.1     3.1     3.1  100%
+   phase           M   16    6     -0.6    -5.2     7.1   50%
+   phase           M   32    3      4.0     2.8     5.4  100%
+   phase           M   48    4      1.1    -0.4     9.5   75%
+   phase           M   50    4     -2.7    -5.8     4.3   75%
+   phase           M   66    4     -2.1   -28.8    -1.6  100%
+   phase           M   82    3      0.7    -0.6     1.8   67%
+   phase           L   48    3      1.6    -1.3    12.1   67%
+   phase           L   66    1     -4.4    -4.4    -4.4  100%
+
+== Held-out (not fitted) curves: bias per curve across runs (+ = tool reads above model; bias/rms in sigma units) ==
+curve        meas      kind runs  bias%   bias    rms  sign  flag
+ZRM16AB    attenu    bottom    4   67.4  59.28  60.26  100%  SYSTEMATIC
+ZRM16AT    attenu       top    4   23.5  57.40  57.87  100%  SYSTEMATIC
+ARM16A     attenu       avg    6   54.0  53.91  54.12  100%  SYSTEMATIC
+ARL48A     attenu       avg    6   34.1  25.63  30.33   83%  SYSTEMATIC
+ARH16A     attenu       avg    5   48.3   9.01   9.14  100%  SYSTEMATIC
+ZRH48AB    attenu    bottom    3   31.4   5.93   6.52  100%  SYSTEMATIC
+ZRH16AB    attenu    bottom    4   52.3   5.61   6.11  100%  SYSTEMATIC
+ZRH16AT    attenu       top    4   41.6   5.50   5.99  100%  SYSTEMATIC
+ZRM48AB    attenu    bottom    3   27.1   5.20   5.86  100%  SYSTEMATIC
+ZRH32AT    attenu       top    3   25.1   4.72   5.20  100%  SYSTEMATIC
+ZRM32AB    attenu    bottom    4   23.3   4.22   4.90  100%  SYSTEMATIC
+ARM32A     attenu       avg    6   16.2   4.03   4.27  100%  SYSTEMATIC
+ZRH48AT    attenu       top    3   17.6   3.53   4.26  100%  SYSTEMATIC
+ZRM32AT    attenu       top    4   13.1   2.74   3.54  100%  SYSTEMATIC
+ZRM48AT    attenu       top    3   14.4   2.49   3.60  100%  SYSTEMATIC
+ARH48A     attenu       avg    5   15.5   2.16   3.95  100%  SYSTEMATIC
+ARM48A     attenu       avg    5   10.1   2.08   3.41  100%  SYSTEMATIC
+ZRH32PT     phase       top    4    8.4   1.15   2.37  100%  SYSTEMATIC
+ZRH32AB    attenu    bottom    2   39.2   6.22   6.98  100%  
+ZRL48AB    attenu    bottom    4   51.9   3.86   4.08   75%  
+ZRL48AT    attenu       top    4   22.2   3.17   3.55   75%  
+ARH32A     attenu       avg    4   14.4   2.62   3.49   75%  
+ARL48P      phase       avg    5    2.5   1.97   2.27   60%  
+ZRH48PB     phase    bottom    3   10.1  -1.86   2.97   67%  
+ZRM32PT     phase       top    2    8.8   1.83   2.86  100%  
+ZRM48PB     phase    bottom    2   18.2   1.45   3.40   50%  
+ZRM48PT     phase       top    2    8.9   1.39   2.51  100%  
+ZRM32PB     phase    bottom    2   11.9   1.30   3.02  100%  
+ARM48P      phase       avg    4   12.0   0.99   3.30   75%  
+ZRL48PB     phase    bottom    2    4.8   0.97   1.86   50%  
+ZRH16PT     phase       top    4   12.3   0.97   1.94  100%  
+ZRL48PT     phase       top    3   -1.7   0.94   1.89   67%  
+ZRM16PT     phase       top    4    4.6   0.89   1.80  100%  
+ARM32P      phase       avg    5    5.4   0.87   2.53   80%  
+ZRH48PT     phase       top    4    5.5   0.86   2.51  100%  
+ARH16P      phase       avg    6    9.3   0.81   3.24   67%  
+ARH32P      phase       avg    6    6.6   0.77   2.63   83%  
+ZRM16PB     phase    bottom    4   -0.7  -0.67   2.21   75%  
+ZRH32PB     phase    bottom    3    5.5   0.62   2.16   67%  
+ARH48P      phase       avg    6    7.1   0.57   2.56   50%  
+ZRH16PB     phase    bottom    4    3.4  -0.48   2.53   50%  
+
+   roll-up by family (held-out): median over runs of each run's median bias%
+   meas         freq  spc runs  median%    min%    max%  sign
+   attenuation     H   16    6     44.9     0.0  3045.5   83%
+   attenuation     H   32    5     21.8    -1.0    28.2   80%
+   attenuation     H   48    6     11.9     8.2    28.6  100%
+   attenuation     M   16    6   4631.0    21.5 22977.1  100%
+   attenuation     M   32    6     19.4     6.7   385.9  100%
+   attenuation     M   48    5     15.6     1.2    27.1  100%
+   attenuation     L   48    6    362.1     0.1  4518.9  100%
+   phase           H   16    6      5.0    -3.6    21.2   67%
+   phase           H   32    6      7.6   -34.7    10.6   83%
+   phase           H   48    6      2.5   -61.5    16.7   50%
+   phase           M   16    4      0.1    -1.3     7.2   50%
+   phase           M   32    6      5.3   -22.3     9.2   83%
+   phase           M   48    5      1.5   -58.4    15.0   80%
+   phase           L   48    6      5.6   -58.3    13.9   67%
+
+== Model sanity per inversion (slice counts) ==
+inversion                                      slices misfit_gt2  pinned_rh   rv_lt_rh aniso_gt10 boundary_u dip_abs_gt
+VB-5_H (13255-17430) 15362-15402 #0f92             10          0          3          0          0          0          0
+VC-1_H (11410-15238) 13290-13330 #c3f9             10          3          4          0          0          0          0
+VC-2_Y3H (16634-17888) 17202-17322 #201b           30          5          0          0          0          0          0
+VC-2_Y3H (16634-17888) 17235-17275 #0252           10          0          4          0          0          0          0
+VC-2_Y3H (16634-17888) 17322-17442 #32bc           30         18          9          0          0          0          0
+VC-2_Y3H (16634-17888) 17442-17562 #c8c3           30         11          0          0          0          0          0
+VC-3_H (11330-15215) 13250-13290 #87dd             10          9          3          0          0          0          0
+Z-19_18580 (18580-24394) 21460-21500 #8b91         10          4          1          0          0          0          0
+Z-20_18840 (18840-23791) 20100-20500 Q #2b        100         80          0          0          0         12          0
+Z-20_18840 (18840-23791) 20200-20260 Q #2f          8          0          6          0          0          0          0
+Z-20_18840 (18840-23791) 20200-20260 Q #91          8          0          2          0          0          0          0
+Z-20_18840 (18840-23791) 20200-20500 Q #48         75         44          0          0          0          0          0
+Z-20_18840 (18840-23791) 20200-20500 Q #b9         75         59          0          0          0         17          0
+
+== Attenuation correction per well: log Ra_meas - log Ra_theory = a + g (log Ra_theory - 1) ==
+curve     well       n    Rt range   x@10   x@40  scat%   Z-20 x@10/x@40
+ARH16A    VB-5      11   7.7-10      1.53      -    7.4   1.21/1.44
+ARH16A    VC-1      11   3.1-3       1.00      -    7.1   1.21/1.44
+ARH16A    VC-2     104   6.7-15      1.66   4.84   14.1   1.21/1.44
+ARH16A    VC-3      11   9.8-29      1.40 1120.37  300.5   1.21/1.44
+ARH16A    Z-19      11   3.3-4       1.08      -    1.5   1.21/1.44
+ARH16A    Z-20     285   6.2-36      1.34   1.95   14.9   1.21/1.44
+ARH32A    VB-5      11   7.8-9       1.25      -    5.5   1.14/1.29
+ARH32A    VC-1      11   3.2-3       1.06      -   14.1   1.14/1.29
+ARH32A    VC-2     104   7.0-16      1.17   1.88    7.7   1.14/1.29
+ARH32A    VC-3      11  16.2-1995    1.78   2.56  320.0   1.14/1.29
+ARH32A    Z-19      11   3.4-4       1.07      -    2.3   1.14/1.29
+ARH32A    Z-20     285   6.3-35      1.28   1.79   11.1   1.14/1.29
+ARH48A    VB-5      11   7.9-9       1.23      -    5.6   1.13/1.25
+ARH48A    VC-1      11   3.4-4       1.12      -   17.8   1.13/1.25
+ARH48A    VC-2     104   7.2-19      1.04   1.73    9.2   1.13/1.25
+ARH48A    VC-3      11  17.5-1995    1.30   1.21  207.0   1.13/1.25
+ARH48A    Z-19      11   3.4-4       1.08      -    3.4   1.13/1.25
+ARH48A    Z-20     285   6.5-35      1.27   1.78   10.0   1.13/1.25
+ARL48A    VB-5      11   7.9-13     10.51 1983.29  208.6   -
+ARL48A    VC-1      11   3.8-5       1.28      -   10.9   -
+ARL48A    VC-2     104   8.6-33     44.49  60.36  390.0   -
+ARL48A    VC-3      11  17.9-72      0.38   8.71  146.8   -
+ARL48A    Z-19      11   3.3-3       1.35      -    6.0   -
+ARL48A    Z-20     285   6.2-35      1.01   0.70   22.8   -
+ARM16A    VB-5      11   7.8-9     230.88      -    7.2   -
+ARM16A    VC-1      11   3.4-4       1.56      -    8.3   -
+ARM16A    VC-2     104   7.4-19    200.00  50.00    0.0   -
+ARM16A    VC-3      11  11.2-33    200.00  50.00    0.0   -
+ARM16A    Z-19      11   3.3-4       1.24      -    1.9   -
+ARM16A    Z-20     285   6.2-34      1.29   0.99   33.4   -
+ARM32A    VB-5      11   7.9-10      1.58      -    5.1   -
+ARM32A    VC-1      11   3.5-4       1.09      -    5.6   -
+ARM32A    VC-2     104   7.7-22      1.28   1.61   13.3   -
+ARM32A    VC-3      11  15.9-45      0.53  10.01  337.3   -
+ARM32A    Z-19      11   3.3-3       1.10      -    4.2   -
+ARM32A    Z-20     285   6.2-34      1.12   1.03   11.1   -
+ARM48A    VB-5      11   7.9-10      1.28      -    4.8   -
+ARM48A    VC-1      11   3.6-4       1.09      -    5.5   -
+ARM48A    VC-3      11  17.3-81      1.29   1.00   28.0   -
+ARM48A    Z-19      11   3.4-3       1.14      -    6.1   -
+ARM48A    Z-20     285   6.3-34      1.14   1.17   12.4   -
+ZRH16AB   VB-5      11   7.2-9       1.56      -   10.3   1.21/1.44
+ZRH16AB   VC-2     104   6.8-22      2.04  54.29   94.1   1.21/1.44
+ZRH16AB   Z-19      11   3.0-4       1.13      -    4.6   1.21/1.44
+ZRH16AB   Z-20     285   6.8-36      1.43   2.21   26.4   1.21/1.44
+ZRH16AT   VB-5      11   8.5-10      1.55      -    5.2   1.21/1.44
+ZRH16AT   VC-2     104   6.7-14      1.69   3.73   17.2   1.21/1.44
+ZRH16AT   Z-19      11   3.6-4       1.06      -    3.0   1.21/1.44
+ZRH16AT   Z-20     285   5.6-35      1.29   1.79   15.9   1.21/1.44
+ZRH32AB   VB-5      11   7.1-9       1.31      -    4.1   1.14/1.29
+ZRH32AB   VC-1      11   3.2-3       1.17      -   33.2   1.14/1.29
+ZRH32AB   VC-2     104   7.0-148     1.20   1.60   11.1   1.14/1.29
+ZRH32AB   Z-19      11   2.9-3       1.21      -    8.4   1.14/1.29
+ZRH32AB   Z-20     285   7.2-36      1.42   2.07   37.5   1.14/1.29
+ZRH32AT   VB-5      11   9.0-10      1.28      -    8.1   1.14/1.29
+ZRH32AT   VC-1      11   3.2-3       1.04      -   23.7   1.14/1.29
+ZRH32AT   VC-2     104   6.9-17      1.23   1.42   11.6   1.14/1.29
+ZRH32AT   Z-19      11   3.9-4       1.04      -    3.8   1.14/1.29
+ZRH32AT   Z-20     285   5.3-35      1.24   1.66   14.0   1.14/1.29
+ZRH48AB   VB-5      11   6.8-9       1.29      -    5.0   1.13/1.25
+ZRH48AB   VC-2     104   7.4-301     1.08   1.33   12.5   1.13/1.25
+ZRH48AB   Z-19      11   2.8-3       1.38      -   13.3   1.13/1.25
+ZRH48AB   Z-20     285   7.1-61      1.56   2.68  128.5   1.13/1.25
+ZRH48AT   VB-5      11   9.2-10      1.21      -   11.7   1.13/1.25
+ZRH48AT   VC-2     104   7.1-22      1.13   1.16   14.2   1.13/1.25
+ZRH48AT   Z-19      11   4.0-5       1.09      -    2.5   1.13/1.25
+ZRH48AT   Z-20     285   5.2-34      1.24   1.62   15.9   1.13/1.25
+ZRL48AB   VB-5      11   7.5-13     24.98  27.63  253.1   -
+ZRL48AB   VC-2     104   9.0-31     64.93  80.08  248.4   -
+ZRL48AB   Z-19      11   3.1-3       1.53      -   13.1   -
+ZRL48AB   Z-20     285   6.0-35      1.06   0.88   78.4   -
+ZRL48AT   VB-5      11   8.4-13     39.62  11.21  240.6   -
+ZRL48AT   VC-2     104   8.2-37     66.31  15.62  399.5   -
+ZRL48AT   Z-19      11   3.6-4       1.22      -   11.0   -
+ZRL48AT   Z-20     285   6.1-34      1.07   1.01   77.8   -
+ZRM16AB   VB-5      11   7.4-9     233.19      -    8.3   -
+ZRM16AB   VC-2     104   7.4-21    200.00  50.00    0.0   -
+ZRM16AB   Z-19      11   3.1-3       1.28      -    3.4   -
+ZRM16AB   Z-20     285   6.8-34      1.48   1.97  101.6   -
+ZRM16AT   VB-5      11   8.2-10    228.43      -    5.9   -
+ZRM16AT   VC-2     104   7.3-18    200.83  13.27   87.1   -
+ZRM16AT   Z-19      11   3.5-4       1.24      -    2.1   -
+ZRM16AT   Z-20     285   5.7-34      1.21   0.82   31.7   -
+ZRM32AB   VB-5      11   7.4-9       1.61      -    6.5   -
+ZRM32AB   VC-2     104   7.9-25      1.18  31.35   80.4   -
+ZRM32AB   Z-19      11   3.1-3       1.20      -    7.7   -
+ZRM32AB   Z-20     285   7.0-35      1.18   1.13   18.6   -
+ZRM32AT   VB-5      11   8.5-10      1.61      -    7.4   -
+ZRM32AT   VC-2     104   7.5-22      1.32   1.09   21.8   -
+ZRM32AT   Z-19      11   3.7-4       1.06      -    2.7   -
+ZRM32AT   Z-20     285   5.6-34      1.09   0.95   12.6   -
+ZRM48AB   VB-5      11   7.3-10      1.27      -    3.0   -
+ZRM48AB   VC-2     104   8.5-34      1.12   3.88   23.3   -
+ZRM48AB   Z-19      11   3.0-3       1.30      -   10.5   -
+ZRM48AB   Z-20     285   6.8-35      1.21   1.29   23.8   -
+ZRM48AT   VB-5      11   8.7-11      1.32      -    9.9   -
+ZRM48AT   VC-2     104   7.7-27      1.23   0.80   16.4   -
+ZRM48AT   Z-19      11   3.8-4       1.06      -    4.2   -
+ZRM48AT   Z-20     285   5.5-34      1.11   1.09   14.1   -
+
+== Phase bias% by well (median; freq + fitted/held-out) ==
+   VB-5   H held: -0.8  L fit: +1.6  L held: +1.6  M fit: +0.4  M held: +2.9
+   VC-1   H held: +8.4  L held: +9.5  M fit: +1.0  M held: +7.6
+   VC-2   H fit: +3.1  H held: +10.9  L fit: -1.3  L held: -5.7  M fit: -0.0  M held: +1.1
+   VC-3   H held: -34.7  L held: -58.3  M fit: -12.2  M held: -40.3
+   Z-19   H fit: -7.9  H held: +0.7  L held: +9.8  M fit: -0.4  M held: +1.2
+   Z-20   H held: +8.0  L fit: +4.3  L held: +13.9  M fit: -1.5  M held: +9.7
+
+== Possible clipped / saturated resistivity readings ==
+   ARH16A    VC-3   max    5000.0  at max   55%  median 5000.0
+   ARH32A    VC-3   max    9675.3  at max   18%  median 46.4
+   ARH32P    VC-3   max     587.9  at max    9%  median 25.7
+   ARH48A    VC-3   max    5000.0  at max   18%  median 42.3
+   ARH48P    VC-3   max     263.6  at max    9%  median 27.4
+   ARL48A    VB-5   max    1549.9  at max    9%  median 42.5
+   ARL48A    VC-2   max    2000.0  at max   26%  median 67.3
+   ARL48A    VC-2   max    2000.0  at max  100%  median 2000.0
+   ARL48A    VC-2   max    2000.0  at max   71%  median 2000.0
+   ARL48A    VC-3   max    2000.0  at max   45%  median 149.6
+   ARM16A    VB-5   max    2000.0  at max  100%  median 2000.0
+   ARM16A    VC-2   max    2000.0  at max  100%  median 2000.0
+   ARM16A    VC-2   max    2000.0  at max  100%  median 2000.0
+   ARM16A    VC-2   max    2000.0  at max  100%  median 2000.0
+   ARM16A    VC-2   max    2000.0  at max  100%  median 2000.0
+   ARM16A    VC-3   max    2000.0  at max  100%  median 2000.0
+   ARM32A    VC-3   max    2000.0  at max   27%  median 45.7
+   ZRH16AB   VC-2   max    5000.0  at max    6%  median 36.9
+   ZRH32AB   VC-2   max     207.1  at max    3%  median 20.5
+   ZRH48AB   VC-2   max     366.8  at max    3%  median 20.6
+   ZRH48AB   Z-20   max    5000.0  at max    2%  median 11.5
+   ZRH48AB   Z-20   max    5000.0  at max    3%  median 25.8
+   ZRH48AB   Z-20   max    5000.0  at max    3%  median 25.8
+   ZRL48AB   VB-5   max    1434.1  at max    9%  median 449.8
+   ZRL48AB   VC-2   max    1645.8  at max    9%  median 469.3
+   ZRL48AB   VC-2   max    2000.0  at max   13%  median 843.4
+   ZRL48AB   VC-2   max    2000.0  at max   90%  median 2000.0
+   ZRL48AB   VC-2   max    2000.0  at max   48%  median 1876.4
+   ZRL48AB   Z-20   max    2000.0  at max    1%  median 10.0
+   ZRL48AB   Z-20   max    2000.0  at max    1%  median 13.8
+   ZRL48AB   Z-20   max    2000.0  at max    1%  median 13.8
+   ZRL48AT   VB-5   max    1564.5  at max    9%  median 613.8
+   ZRL48AT   VC-2   max    2000.0  at max    9%  median 79.6
+   ZRL48AT   VC-2   max    2000.0  at max   29%  median 894.3
+   ZRL48AT   VC-2   max    2000.0  at max   74%  median 2000.0
+   ZRL48AT   VC-2   max    2000.0  at max   61%  median 2000.0
+   ZRL48AT   Z-20   max    2000.0  at max    1%  median 9.4
+   ZRL48AT   Z-20   max    2000.0  at max    1%  median 11.7
+   ZRL48AT   Z-20   max    2000.0  at max    1%  median 11.7
+   ZRM16AB   VB-5   max    2000.0  at max  100%  median 2000.0
+   ZRM16AB   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM16AB   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM16AB   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM16AB   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM16AB   Z-20   max    2000.0  at max    2%  median 10.9
+   ZRM16AB   Z-20   max    2000.0  at max    3%  median 15.1
+   ZRM16AB   Z-20   max    2000.0  at max    3%  median 15.1
+   ZRM16AT   VB-5   max    2000.0  at max  100%  median 2000.0
+   ZRM16AT   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM16AT   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM16AT   VC-2   max    2000.0  at max   90%  median 2000.0
+   ZRM16AT   VC-2   max    2000.0  at max  100%  median 2000.0
+   ZRM32AB   VC-2   max    2000.0  at max   10%  median 31.1
+   ZRM48AB   VC-2   max     222.3  at max    3%  median 27.8
+   ZRM50PT   VC-3   max    5000.0  at max   27%  median 65.3
+   ZRM66PT   VC-3   max    1339.1  at max    9%  median 50.0
+
+== Channels fitted per inversion ==
+   #0f92 VB-5   AR HAx1, AR LPx1, AR MPx3, ZR-LS(guessed) MPx6
+   #c3f9 VC-1   AR MPx1, ZR HAx2, ZR-LS(guessed) MPx4, geo Ax1, geo Px3
+   #0252 VC-2   AR MPx1, ZR HAx3, ZR HPx1, ZR LPx1, ZR MAx2, ZR MPx4
+   #201b VC-2   AR MPx1, ZR HAx3, ZR HPx1, ZR LPx1, ZR MAx2, ZR MPx4
+   #32bc VC-2   AR MPx1, ZR HAx3, ZR HPx1, ZR LPx1, ZR MAx2, ZR MPx4
+   #c8c3 VC-2   AR MPx1, ZR HAx3, ZR HPx1, ZR LPx1, ZR MAx2, ZR MPx4
+   #87dd VC-3   AR HAx1, AR MPx1, ZR-LS(guessed) MPx4, geo Ax1, geo Px2
+   #8b91 Z-19   AR HAx1, AR MPx1, ZR HAx2, ZR HPx1, ZR MPx4, ZR-LS(guessed) MPx2, geo Px1
+   #2b23 Z-20   AR HAx1, AR MPx1, ZR LPx2, ZR-LS(guessed) MPx6, geo Ax1, geo Px1
+   #2f41 Z-20   AR HAx1, AR MPx2, ZR LPx2, ZR MAx2, ZR-LS(guessed) MPx6, geo Ax1, geo Px1
+   #4894 Z-20   AR HAx1, AR MPx1, ZR LPx2, ZR-LS(guessed) LPx2, ZR-LS(guessed) MPx6, geo Ax1, geo Px1
+   #9179 Z-20   AR HAx1, AR MPx2, ZR LPx2, ZR MAx2, ZR-LS(guessed) MPx6, geo Ax1, geo Px1
+   #b914 Z-20   AR HAx1, AR MPx1, ZR LPx2, ZR-LS(guessed) LPx2, ZR-LS(guessed) MPx6, geo Ax1, geo Px1
+
+wrote logs/grid/qc_report.json

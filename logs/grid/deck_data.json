@@ -1,0 +1,422 @@
+{
+ "n_inversions": 13,
+ "wells": [
+  "VB-5",
+  "VC-1",
+  "VC-2",
+  "VC-3",
+  "Z-19",
+  "Z-20"
+ ],
+ "n_slices": 406,
+ "all_wells": 11,
+ "inversions": [
+  {
+   "well": "VB-5",
+   "md": "15362-15402",
+   "quick": false,
+   "job": "0f92",
+   "misfit": 1.28,
+   "rms_pct": 6.42,
+   "rv_rh": 1.09,
+   "hphase_heldout_bias": -0.8,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 6,
+   "clipped_fitted_values": 0,
+   "n_used": 11
+  },
+  {
+   "well": "VC-1",
+   "md": "13290-13330",
+   "quick": false,
+   "job": "c3f9",
+   "misfit": 1.9,
+   "rms_pct": 18.3,
+   "rv_rh": 1.03,
+   "hphase_heldout_bias": 8.4,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 4,
+   "clipped_fitted_values": 0,
+   "n_used": 11
+  },
+  {
+   "well": "VC-2",
+   "md": "17202-17322",
+   "quick": false,
+   "job": "201b",
+   "misfit": 1.74,
+   "rms_pct": 10.9,
+   "rv_rh": 1.8,
+   "hphase_heldout_bias": 5.7,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 0,
+   "clipped_fitted_values": 0,
+   "n_used": 12
+  },
+  {
+   "well": "VC-2",
+   "md": "17235-17275",
+   "quick": false,
+   "job": "0252",
+   "misfit": 1.54,
+   "rms_pct": 8.7,
+   "rv_rh": 1.76,
+   "hphase_heldout_bias": 7.0,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 0,
+   "clipped_fitted_values": 0,
+   "n_used": 12
+  },
+  {
+   "well": "VC-2",
+   "md": "17322-17442",
+   "quick": false,
+   "job": "32bc",
+   "misfit": 2.52,
+   "rms_pct": 32.69,
+   "rv_rh": 1.93,
+   "hphase_heldout_bias": 9.9,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 0,
+   "clipped_fitted_values": 0,
+   "n_used": 12
+  },
+  {
+   "well": "VC-2",
+   "md": "17442-17562",
+   "quick": false,
+   "job": "c8c3",
+   "misfit": 2.07,
+   "rms_pct": 13.25,
+   "rv_rh": 1.0,
+   "hphase_heldout_bias": 12.6,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 0,
+   "clipped_fitted_values": 0,
+   "n_used": 12
+  },
+  {
+   "well": "VC-3",
+   "md": "13250-13290",
+   "quick": false,
+   "job": "87dd",
+   "misfit": 14.16,
+   "rms_pct": 127.31,
+   "rv_rh": 1.63,
+   "hphase_heldout_bias": -34.7,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 4,
+   "clipped_fitted_values": 6,
+   "n_used": 9
+  },
+  {
+   "well": "Z-19",
+   "md": "21460-21500",
+   "quick": false,
+   "job": "8b91",
+   "misfit": 1.73,
+   "rms_pct": 8.37,
+   "rv_rh": 1.16,
+   "hphase_heldout_bias": 0.7,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 2,
+   "clipped_fitted_values": 0,
+   "n_used": 12
+  },
+  {
+   "well": "Z-20",
+   "md": "20100-20500",
+   "quick": true,
+   "job": "2b23",
+   "misfit": 4.05,
+   "rms_pct": 25.43,
+   "rv_rh": 1.24,
+   "hphase_heldout_bias": 10.8,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 6,
+   "clipped_fitted_values": 0,
+   "n_used": 12
+  },
+  {
+   "well": "Z-20",
+   "md": "20200-20260",
+   "quick": true,
+   "job": "2f41",
+   "misfit": 1.35,
+   "rms_pct": 6.44,
+   "rv_rh": 1.08,
+   "hphase_heldout_bias": -1.5,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 6,
+   "clipped_fitted_values": 0,
+   "n_used": 15
+  },
+  {
+   "well": "Z-20",
+   "md": "20200-20260",
+   "quick": true,
+   "job": "9179",
+   "misfit": 1.22,
+   "rms_pct": 5.97,
+   "rv_rh": 1.06,
+   "hphase_heldout_bias": 1.1,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 6,
+   "clipped_fitted_values": 0,
+   "n_used": 15
+  },
+  {
+   "well": "Z-20",
+   "md": "20200-20500",
+   "quick": true,
+   "job": "4894",
+   "misfit": 2.36,
+   "rms_pct": 15.26,
+   "rv_rh": 1.01,
+   "hphase_heldout_bias": 9.8,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 8,
+   "clipped_fitted_values": 0,
+   "n_used": 14
+  },
+  {
+   "well": "Z-20",
+   "md": "20200-20500",
+   "quick": true,
+   "job": "b914",
+   "misfit": 3.72,
+   "rms_pct": 23.9,
+   "rv_rh": 1.19,
+   "hphase_heldout_bias": 11.2,
+   "fits_2mhz_atten": true,
+   "guessed_ls": 8,
+   "clipped_fitted_values": 0,
+   "n_used": 14
+  }
+ ],
+ "atten_factor": {
+  "ARH16A": {
+   "VB-5": 1.53,
+   "VC-1": 1.0,
+   "VC-2": 1.66,
+   "Z-19": 1.08,
+   "Z-20": 1.34
+  },
+  "ARH32A": {
+   "VB-5": 1.25,
+   "VC-1": 1.06,
+   "VC-2": 1.17,
+   "Z-19": 1.07,
+   "Z-20": 1.28
+  },
+  "ARH48A": {
+   "VB-5": 1.23,
+   "VC-1": 1.12,
+   "VC-2": 1.04,
+   "Z-19": 1.08,
+   "Z-20": 1.27
+  }
+ },
+ "atten_rt_range": {
+  "VB-5": [
+   7.7,
+   9.5
+  ],
+  "VC-1": [
+   3.1,
+   3.5
+  ],
+  "VC-2": [
+   6.7,
+   15.0
+  ],
+  "VC-3": [
+   9.8,
+   28.9
+  ],
+  "Z-19": [
+   3.3,
+   3.7
+  ],
+  "Z-20": [
+   6.2,
+   35.6
+  ]
+ },
+ "z20_table_at10": {
+  "ARH16A": 1.21,
+  "ARH32A": 1.14,
+  "ARH48A": 1.13
+ },
+ "clipping": {
+  "VB-5": {
+   "ARM16A": 100.0,
+   "ZRM16AT": 100.0,
+   "ZRM16AB": 100.0
+  },
+  "VC-1": {},
+  "VC-2": {
+   "ARM16A": 100.0,
+   "ARL48A": 100.0,
+   "ZRH16AB": 10.0,
+   "ZRM16AT": 100.0,
+   "ZRM16AB": 100.0,
+   "ZRM32AB": 10.0,
+   "ZRL48AT": 74.0,
+   "ZRL48AB": 90.0
+  },
+  "VC-3": {
+   "ARH16A": 55.0,
+   "ARH32A": 18.0,
+   "ARH48A": 27.0,
+   "ARM16A": 100.0,
+   "ARM32A": 27.0,
+   "ARL48A": 45.0,
+   "ZRM50PT": 36.0
+  },
+  "Z-19": {},
+  "Z-20": {}
+ },
+ "noise": {
+  "AR 125 kHz phase": {
+   "median_rms_sigma": 0.68,
+   "n": 1,
+   "sigma": 0.02
+  },
+  "AR 2 MHz atten": {
+   "median_rms_sigma": 1.36,
+   "n": 5,
+   "sigma": 0.02
+  },
+  "AR 500 kHz phase": {
+   "median_rms_sigma": 1.35,
+   "n": 14,
+   "sigma": 0.02
+  },
+  "ZG geosignal atten": {
+   "median_rms_sigma": 1.36,
+   "n": 4,
+   "sigma": 0.074
+  },
+  "ZG geosignal phase": {
+   "median_rms_sigma": 1.56,
+   "n": 7,
+   "sigma": 1.172
+  },
+  "ZR 125 kHz phase": {
+   "median_rms_sigma": 0.98,
+   "n": 10,
+   "sigma": 0.024
+  },
+  "ZR 2 MHz atten": {
+   "median_rms_sigma": 1.54,
+   "n": 16,
+   "sigma": 0.035
+  },
+  "ZR 2 MHz phase": {
+   "median_rms_sigma": 1.25,
+   "n": 5,
+   "sigma": 0.049
+  },
+  "ZR 50/66/82 (guessed geom.)": {
+   "median_rms_sigma": 1.31,
+   "n": 32,
+   "sigma": 0.02
+  },
+  "ZR 500 kHz atten": {
+   "median_rms_sigma": 3.33,
+   "n": 12,
+   "sigma": 0.02
+  },
+  "ZR 500 kHz phase": {
+   "median_rms_sigma": 1.1,
+   "n": 20,
+   "sigma": 0.026
+  }
+ },
+ "ls_misfit": {
+  "with": {
+   "median": 2.26,
+   "n": 296
+  },
+  "without": {
+   "median": 1.81,
+   "n": 100
+  }
+ },
+ "dielectric": {
+  "eps": [
+   1,
+   10,
+   20,
+   40,
+   60,
+   100,
+   150
+  ],
+  "R_ohmm": 10,
+  "H16A": [
+   1.0,
+   1.027,
+   1.058,
+   1.128,
+   1.208,
+   1.409,
+   1.794
+  ],
+  "H32A": [
+   1.0,
+   1.017,
+   1.037,
+   1.079,
+   1.123,
+   1.223,
+   1.373
+  ],
+  "H48A": [
+   1.0,
+   1.014,
+   1.03,
+   1.064,
+   1.099,
+   1.175,
+   1.282
+  ],
+  "M16A": [
+   1.0,
+   1.011,
+   1.024,
+   1.051,
+   1.079,
+   1.141,
+   1.232
+  ],
+  "H16P": [
+   1.0,
+   0.996,
+   0.992,
+   0.983,
+   0.975,
+   0.958,
+   0.936
+  ],
+  "H48P": [
+   1.0,
+   0.993,
+   0.985,
+   0.969,
+   0.954,
+   0.923,
+   0.886
+  ],
+  "M16P": [
+   1.0,
+   1.0,
+   0.999,
+   0.998,
+   0.996,
+   0.994,
+   0.991
+  ]
+ }
+}

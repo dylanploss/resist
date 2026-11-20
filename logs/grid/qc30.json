@@ -1,0 +1,107 @@
+{
+ "curves": "qc",
+ "layers": 3,
+ "step_ft": 4.0,
+ "quick": false,
+ "runs": [
+  {
+   "run": "2_4-VB-5_H_T5_13255-17430ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     15362.0,
+     15402.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-VC-1_H-T2_11410-15238ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     13290.0,
+     13330.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-VC-2_Y3H_16634-17888ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     17235.0,
+     17275.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-VC-3_H_11330-15215ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     13250.0,
+     13290.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-19_18580-24394ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     21460.0,
+     21500.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-20_18840-23791ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     21280.0,
+     21320.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-25_20156-21218ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     20676.0,
+     20716.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-25_21250-25029ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     23130.0,
+     23170.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-26_16630-19918ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     18270.0,
+     18310.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-31_Y1_16790-18703ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     17710.0,
+     17750.0
+    ]
+   ]
+  },
+  {
+   "run": "2_4-Z-6_16954-20950ft_RES_GEOSIGNAL",
+   "intervals": [
+    [
+     18914.0,
+     18954.0
+    ]
+   ]
+  }
+ ]
+}
