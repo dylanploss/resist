@@ -94,7 +94,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(delivered_only["_sources"]["ZRM32AT"], "ZRM32AT")
         self.assertIn("left/right", reasons["ZRH16PL"])
         self.assertTrue(used["ZRM50PT"]["guessed_geometry"])
-        self.assertEqual(used["ZRM50PB"]["weight"], 0.5)
+        self.assertEqual(used["ZRM50PB"]["weight"], 1.0)
         self.assertFalse(used["ZRL48PT"]["guessed_geometry"])
         self.assertTrue(any("Guessed geometry for ZRM50P" in w for w in plan["warnings"]))
         self.assertIn("context log", reasons["GR"])
@@ -143,8 +143,23 @@ class DirectionalForwardTests(unittest.TestCase):
         (v,) = self.values(LayerModel(np.array([]), np.array([10.0]), np.array([10.0])), [0.0])
         for lab in ("ARH16P", "ZRH16PT", "ZRH16PB", "ZRL48AT", "ZRM50PT", "ZRL82PB"):
             self.assertAlmostEqual(10 ** v[lab], 10.0, delta=0.02)
-        for lab in ("ZGM112PT", "ZGM112AT", "ZGL112PT"):
-            self.assertAlmostEqual(v[lab], 0.0, places=6)
+        for lab in (k for k in v if k.startswith("ZG")):
+            self.assertAlmostEqual(v[lab], 0.0, places=6, msg=lab)
+
+    def test_spec_geometry_uses_the_six_transmitters_and_r3(self):
+        from backend.inversion.adr_forward import R3_IN
+
+        fwd = ADRForward(azimuthal=True)
+        self.assertEqual(sorted(g.name for g in fwd.geosignals),
+                         sorted(["ZGH16", "ZGH32", "ZGH48", "ZGM16", "ZGM32", "ZGM48", "ZGM80", "ZGM96", "ZGM112",
+                                 "ZGL48", "ZGL80", "ZGL96", "ZGL112"]))
+        transmitters = (-48, -32, -16, 16, 32, 48)
+        for g in fwd.geosignals:
+            self.assertIn(R3_IN - g.spacing_in, transmitters)          # s = 64 - T
+        midpoint = 0.5 * (fwd.receiver_sep_in / 2 + R3_IN)                # R1-R3 midpoint
+        self.assertEqual(midpoint, 34.0)
+        for ch in fwd.long_spacings:
+            self.assertIn(midpoint - ch.spacing_in, (-16, -32, -48))      # T2, T4, T6
 
     def test_inclined_homogeneous_zero_geosignal_with_unnormalised_vectors(self):
         fwd = ADRForward(azimuthal=True, quadrant="bin", long_spacings=())
@@ -165,7 +180,13 @@ class DirectionalForwardTests(unittest.TestCase):
         self.assertGreater(below["ZGM112PT"], 1.0)
         self.assertGreater(below["ZGM112AT"], 0.1)
         self.assertAlmostEqual(above["ZRL48PT"], below["ZRL48PB"], places=6)
-        self.assertAlmostEqual(above["ZGM112PT"], -below["ZGM112PT"], places=6)
+        # Bin minus the mean of all bins: mirroring the bed swaps the top and bottom geosignals.
+        fwd = ADRForward(azimuthal=True, zg_sides=("T", "B"), long_spacings=())
+        mirror = [dict(zip(fwd.channel_labels(), fwd.predict(m, self.horizontal(np.array([z])))[0])) for m, z in (
+            (LayerModel(np.array([1.0]), np.array([8.0, 50.0]), np.array([8.0, 50.0])), 0.8),
+            (LayerModel(np.array([-1.0]), np.array([50.0, 8.0]), np.array([50.0, 8.0])), -0.8))]
+        self.assertAlmostEqual(mirror[1]["ZGM112PT"], mirror[0]["ZGM112PB"], places=6)
+        self.assertLess(above["ZGM112PT"], 0.0)
 
     def test_sector_quadrants_symmetric_in_layers_and_follow_tool_roll(self):
         fwd = ADRForward(azimuthal=True, zr_sides=("T", "R", "B", "L"), zg_sides=("T", "R", "B", "L"))
@@ -174,7 +195,7 @@ class DirectionalForwardTests(unittest.TestCase):
         traj = self.horizontal(np.array([0.4, 0.7]))
         up = dict(zip(labels, fwd.predict(model, traj)[1]))
         self.assertAlmostEqual(up["ZRM48PR"], up["ZRM48PL"], places=9)
-        self.assertAlmostEqual(up["ZGM112PR"], 0.0, places=9)
+        self.assertAlmostEqual(up["ZGM112PR"], up["ZGM112PL"], places=9)
         self.assertGreater(up["ZRM48PB"], up["ZRM48PT"])
         traj.high = np.tile([0.0, 1.0, 0.0], (len(traj), 1))   # roll the tool 90 degrees about its axis
         rolled = dict(zip(labels, fwd.predict(model, traj)[1]))

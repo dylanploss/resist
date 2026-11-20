@@ -79,10 +79,17 @@ class CosmosStore:
         self._cache_lock = threading.Lock()
 
     def _default_client(self):
+        import ssl
+
+        import certifi
         from gremlin_python.driver import client, serializer
+        from gremlin_python.driver.aiohttp.transport import AiohttpTransport
         s = self._settings
+        # python.org Python on macOS ships without a CA bundle; certifi's works everywhere.
+        ctx = ssl.create_default_context(cafile=certifi.where())
         return client.Client(s.endpoint, "g", username=s.username, password=s.key, pool_size=WORKERS,
-                             message_serializer=serializer.GraphSONSerializersV2d0())
+                             message_serializer=serializer.GraphSONSerializersV2d0(),
+                             transport_factory=lambda: AiohttpTransport(ssl_options=ctx))
 
     def close(self):
         try:

@@ -10,3 +10,4 @@ matplotlib>=3.8
 scipy>=1.11
 empymod>=2.3
 gremlinpython>=3.7
+certifi>=2024.2

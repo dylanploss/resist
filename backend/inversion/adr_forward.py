@@ -102,11 +102,15 @@ class LayerModel:
 
 
 FREQ_LETTER = {2e6: "H", 5e5: "M", 1.25e5: "L"}
-DEFAULT_GEOSIGNALS = (Channel("ZGM112", 5e5, 112), Channel("ZGL112", 1.25e5, 112))
-# Long-spacing (LS) azimuthal images ZR{M,L}{50,66,82}. Their antenna layout is NOT confirmed. Guess: 50/66/82 in
-# = 16/32/48 in + 34 in, i.e. the uphole 16/32/48 in transmitters firing to a third tilted receiver 34 in downhole of
-# the tool midpoint, measured uncompensated against the near main receiver (+receiver_sep/2).
-LS_RECEIVER_IN = 34.0
+# ADR antenna layout (inches along the tool axis from the R1/R2 midpoint, positive downhole):
+# * transmitters T1..T6 at +/-16, +/-32, +/-48; T2, T4, T6 are the uphole ones at -16, -32, -48;
+# * R1/R2 at +/- receiver_sep/2 (R1 = +4 in for the default 8 in), compensated pair for the 16/32/48 in channels;
+# * R3, a tilted receiver at +64 in. Geosignals: every transmitter fires into R3 alone, spacing s = 64 - T, so
+#   s = 16, 32, 48, 80, 96, 112 in. Long spacing: T2/T4/T6 fire into R1 (near) and R3 (far), uncompensated; the
+#   spacing is the distance to the R1-R3 midpoint (+34 in), so 50/66/82 in. That pairing is inferred, not published.
+R3_IN = 64.0
+DEFAULT_GEOSIGNALS = tuple(Channel(f"ZG{FREQ_LETTER[f]}{s}", f, s) for f, spacings in (
+    (2e6, (16, 32, 48)), (5e5, (16, 32, 48, 80, 96, 112)), (1.25e5, (48, 80, 96, 112))) for s in spacings)
 DEFAULT_LONG_SPACINGS = tuple(Channel(f"ZR{FREQ_LETTER[f]}{s}", f, s)
                               for f in (5e5, 1.25e5) for s in (50, 66, 82))
 
@@ -116,11 +120,11 @@ class ADRForward:
     """Averaged (``AR``) and, with ``azimuthal=True``, directional channels:
 
     * ``ZR<f><s>{P,A}{T,B}``: compensated top/bottom-bin apparent resistivities of the tilted receiver pair.
-    * ``ZR{M,L}{50,66,82}{P,A}{T,B}``: long-spacing quadrants on a GUESSED geometry (see ``LS_RECEIVER_IN``):
-      uncompensated, so tool/borehole effects are not cancelled; use with reduced weight.
-    * ``ZG<f>112{P,A}T``: top-bin geosignal for one transmitter 112 in uphole of a tilted receiver at the tool
-      midpoint: phase(top) - phase(bottom) in deg and 20 log10|V_bottom / V_top| in dB. These signs match the
-      delivered data: on Z-19 and Z-20 both rise when the bottom bin reads more resistive (r = +0.52 to +0.66).
+    * ``ZR{M,L}{50,66,82}{P,A}{T,B}``: long-spacing quadrants, T2/T4/T6 into R1 (near) and R3 (far), uncompensated
+      (see ``R3_IN``; the pairing is inferred), so tool/borehole effects are not cancelled; check their misfit.
+    * ``ZG<f><s>{P,A}T``: top-bin geosignal of one transmitter into R3 alone (``s = 64 - T``): each bin minus the
+      average of all 32 bins, as phase (deg) and attenuation (dB). Signs follow the delivered data: on Z-19 and Z-20
+      the top geosignal rises when the bottom bin reads more resistive (r = +0.52 to +0.66).
 
     Directional assumptions (not vendor-confirmed): receivers tilted ``tilt_deg`` from the axis; the
     compensated bin at look direction psi pairs the uphole transmitter at psi with the downhole transmitter at
@@ -137,7 +141,7 @@ class ADRForward:
     azimuthal: bool = False
     geosignals: tuple = DEFAULT_GEOSIGNALS
     long_spacings: tuple = DEFAULT_LONG_SPACINGS
-    ls_receiver_in: float = LS_RECEIVER_IN
+    ls_receiver_in: float = R3_IN       # R3 position, downhole of the R1/R2 midpoint
     tilt_deg: float = 45.0
     polarity: int | None = None
     quadrant: str = "sector"
@@ -217,22 +221,26 @@ class ADRForward:
         r_f = self.rotation * np.cross(t_f, h_f)
         axes = (t_f, h_f, r_f)
         rx_off = list(self.rx_offsets)
-        gs_rx = ls_rx = None
-        if self.geosignals:
-            gs_rx = len(rx_off); rx_off.append(0.0)
-        if self.long_spacings:
-            ls_rx = len(rx_off); rx_off.append(self.ls_receiver_in * INCH)
+        r3 = None
+        if self.geosignals or self.long_spacings:
+            r3 = len(rx_off); rx_off.append(self.ls_receiver_in * INCH)
+        gs_rx = ls_rx = r3
         ns = len(self.spacings)
-        extra, ls_tx = [], []
-        base = 2 * ns + len(self.geosignals)
-        for ch in self.long_spacings:
-            d = ch.spacing_in - self.ls_receiver_in      # transmitter distance uphole of the tool midpoint
-            hit = np.flatnonzero(np.isclose(self.spacings, d))
+        extra = []
+        base = 2 * ns
+
+        def tx_index(offset_in):
+            hit = np.flatnonzero(np.isclose(self.tx_offsets, offset_in * INCH))
             if hit.size:
-                ls_tx.append(int(hit[0]))                                         # existing uphole transmitter
-            else:
-                ls_tx.append(base + len(extra)); extra.append(-d * INCH)
-        tx_off = np.concatenate([self.tx_offsets, [-g.spacing_in * INCH for g in self.geosignals], extra])
+                return int(hit[0])
+            extra.append(offset_in * INCH)
+            return base + len(extra) - 1
+
+        # Long spacing: spacing is to the R1-R3 midpoint; geosignal: spacing is to R3.
+        ls_mid = 0.5 * (self.rx_offsets[1] / INCH + self.ls_receiver_in)
+        ls_tx = [tx_index(ls_mid - ch.spacing_in) for ch in self.long_spacings]
+        gs_tx = [tx_index(self.ls_receiver_in - g.spacing_in) for g in self.geosignals]
+        tx_off = np.concatenate([self.tx_offsets, extra])
 
         def points(offsets, dirs):
             offsets = np.asarray(offsets, float)
@@ -272,11 +280,13 @@ class ADRForward:
             ratio = vb[fi, 1, :, tj] / vb[fi, ls_rx, :, tj]            # near main Rx / LS Rx, same look direction
             ls_p.append(-np.angle(ratio, deg=True)); ls_a.append(20 * np.log10(abs(ratio)))
         gs = np.empty((BINS, len(self.geosignals), 2))
-        for j, g in enumerate(self.geosignals):
+        for j, (g, tj) in enumerate(zip(self.geosignals, gs_tx)):
             fi = int(np.searchsorted(self.freqs, g.frequency_hz))
-            vg = vb[fi, gs_rx, :, 2 * ns + j]
-            gs[:, j, 0] = np.angle(vg / vg[opp], deg=True)
-            gs[:, j, 1] = 20 * np.log10(abs(vg[opp] / vg))
+            vg = vb[fi, gs_rx, :, tj]
+            phase = np.angle(vg / vg[0], deg=True)       # relative to bin 0, so no wrap across bins
+            gs[:, j, 0] = phase - phase.mean()
+            att = -20 * np.log10(abs(vg))
+            gs[:, j, 1] = att - att.mean()
         empty = np.empty((BINS, 0))
         ls = (np.array(ls_p).T, np.array(ls_a).T) if ls_p else (empty, empty)
         return (np.array(avg_p), np.array(avg_a)), (np.array(bin_p).T, np.array(bin_a).T), ls, gs
@@ -315,7 +325,7 @@ class ADRForward:
         return rp, ra
 
     def ls_tables(self):
-        """Whole-space transform tables for the guessed long-spacing geometry."""
+        """Whole-space transform tables for the uncompensated R1/R3 long-spacing pairs."""
         if self._ls_tables is None:
             t_f, h_f = np.array([0.0, 0.0, 1.0]), np.array([1.0, 0.0, 0.0])
             ph, at = [], []

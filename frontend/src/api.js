@@ -59,6 +59,8 @@ export const getInversionDefaults = (run) => request(`/inversion/defaults?run=${
 
 export const postInversionPlan = (body) => postJson('/inversion/plan', body)
 
+export const postInversionSection = (body) => postJson('/inversion/section', body)
+
 export const postInversionJob = (body) => postJson('/inversion/jobs', body)
 
 export const getInversionJob = (id) => request(`/inversion/jobs/${encodeURIComponent(id)}`)

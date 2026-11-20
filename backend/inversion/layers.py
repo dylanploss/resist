@@ -56,7 +56,14 @@ def boundary_geometry(result: dict) -> dict:
         nearest["distance_m"].append(d)
         nearest["above"].append(None if k is None else boundaries[k]["above"][i])
     return {"md_ft": md, "tvd_ft": tvd, "dip_deg": model["dip_deg"], "dip_azimuth_deg": model["dip_azimuth_deg"],
-            "normal_ned": normal, "layers": layers, "boundaries": boundaries, "nearest": nearest}
+            "normal_ned": normal, "layers": layers, "boundaries": boundaries, "nearest": nearest,
+            "slice_ft": result.get("slice_ft"), "window_ft": result.get("window_ft"),
+            "slices": [{key: s.get(key) for key in SLICE_KEYS} for s in result.get("slices") or []]}
+
+
+# What the 3D curtain needs of each slice (see frontend sectionModel.js).
+SLICE_KEYS = ("md_centre_ft", "slice_min_ft", "slice_max_ft", "window_min_ft", "window_max_ft", "md_ft",
+              "boundary_tvd_ft", "layers", "rh_std_log", "boundary_std_ft", "misfit_normalised")
 
 
 def job_summary(job) -> dict:
