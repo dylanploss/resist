@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import logging
+import os
 import re
 import threading
 import time
@@ -53,7 +54,7 @@ GEOSIGNAL_WEIGHT = {"ZGL112AT": 0.25}  # 125 kHz attenuation geosignal barely tr
 GUESSED_GEOMETRY_WEIGHT = 1.0           # ZR 50/66/82 in: antenna layout guessed, uncompensated; kept at full weight
 LS_SPACINGS = (50, 66, 82)
 SIGMA_FLOOR = {"log": 0.02, "deg": 0.5, "dB": 0.05}
-WORKERS = 6
+WORKERS = int(os.environ.get("RESIST_INVERSION_WORKERS", 6))  # process-pool size per job
 MAX_STATIONS = 250
 MAX_INTERVAL_FT = 1500.0
 # Each slice of the curtain is its own 1.5D fit on a sliding data window centred on it.

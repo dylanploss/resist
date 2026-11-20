@@ -146,4 +146,5 @@ if __name__ == "__main__":
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    uvicorn.run(app, port=int(os.environ.get("RESIST_BACKEND_PORT", "5000")))
+    uvicorn.run(app, host=os.environ.get("RESIST_BACKEND_HOST", "127.0.0.1"),
+                port=int(os.environ.get("RESIST_BACKEND_PORT", "5000")))

@@ -1,0 +1,10 @@
+{
+  "curves": "qc",
+  "layers": 3,
+  "step_ft": 4.0,
+  "quick": false,
+  "runs": [
+    {"run": "VC-2", "intervals": [[17202, 17322], [17322, 17442], [17442, 17562]]},
+    {"run": "Z-20", "intervals": [[20100, 20500]]}
+  ]
+}

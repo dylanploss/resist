@@ -1,0 +1,21 @@
+[Unit]
+Description=RESIST backend (inversion server) on :8000
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=azureuser
+WorkingDirectory=/opt/resist
+Environment=RESIST_BACKEND_HOST=0.0.0.0
+Environment=RESIST_BACKEND_PORT=8000
+Environment=PYTHONUNBUFFERED=1
+# Interim Cosmos key (root-only, written by update-server.ps1 -KeyFromMyLogin) until the VM identity has its role.
+EnvironmentFile=-/etc/resist/backend.env
+# (systemd: $$ is a literal $.) Cosmos key via the VM's managed identity (`az cosmosdb keys list` in backend/inversion/cosmos_config.py).
+ExecStartPre=-/bin/sh -c 'az account show -o none 2>/dev/null || az login --identity --allow-no-subscriptions -o none'
+ExecStart=/bin/sh -c 'RESIST_INVERSION_WORKERS=$$(( $$(nproc) - 2 )) exec /opt/resist/.venv/bin/python -m backend.app'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

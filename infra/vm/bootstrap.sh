@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Bootstrap the RESIST grid VM (Ubuntu 22.04): python3.12, build tools, Azure CLI, /opt/resist venv.
+# Idempotent. Run as the admin user with sudo rights: bash bootstrap.sh /tmp/resist.bundle
+set -euo pipefail
+BUNDLE="${1:-/tmp/resist.bundle}"
+APP=/opt/resist
+SUB=2668e2c1-a6ab-42da-8bcf-edd50a6fc470
+export DEBIAN_FRONTEND=noninteractive
+
+if ! command -v python3.12 >/dev/null; then
+  sudo -E apt-get update -q
+  sudo -E apt-get install -yq software-properties-common
+  sudo -E add-apt-repository -y ppa:deadsnakes/ppa
+  sudo -E apt-get update -q
+  sudo -E apt-get install -yq -o Acquire::Retries=5 python3.12 python3.12-venv build-essential git
+fi
+if ! command -v az >/dev/null; then
+  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo -E bash
+fi
+
+sudo mkdir -p "$APP" && sudo chown "$(id -u):$(id -g)" "$APP"
+if [ -d "$APP/.git" ]; then
+  git -C "$APP" fetch -q "$BUNDLE" HEAD
+  git -C "$APP" checkout -q --force --detach FETCH_HEAD
+else
+  git clone -q --no-checkout "$BUNDLE" "$APP"
+  git -C "$APP" checkout -q --detach "$(git ls-remote "$BUNDLE" HEAD | cut -f1)"
+fi
+git -C "$APP" log --oneline -1
+
+[ -x "$APP/.venv/bin/python" ] || python3.12 -m venv "$APP/.venv"
+"$APP/.venv/bin/pip" install -q --upgrade pip
+"$APP/.venv/bin/pip" install -q -r "$APP/backend/requirements.txt"
+
+# Managed identity -> Cosmos key via `az cosmosdb keys list` (backend/inversion/cosmos_config.py).
+# Without the role assignment the identity sees no subscription; run-grid.ps1 then passes the key over SSH stdin.
+az account show -o none 2>/dev/null || az login --identity --allow-no-subscriptions -o none
+az account set --subscription "$SUB" 2>/dev/null || echo "WARNING: VM identity has no access to $SUB (role assignment missing)"
+# Inversion server: systemd unit resist-backend on :8000 (restarted by update-server.ps1).
+sudo install -m 644 "$APP/infra/vm/resist-backend.service" /etc/systemd/system/resist-backend.service
+sudo sed -i 's/\r$//' /etc/systemd/system/resist-backend.service
+sudo systemctl daemon-reload
+sudo systemctl enable -q resist-backend
+systemctl is-active -q resist-backend || sudo systemctl start resist-backend
+echo "bootstrap ok: $(nproc) CPUs, $("$APP/.venv/bin/python" --version)"
