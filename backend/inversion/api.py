@@ -9,6 +9,21 @@ from backend.services import runs
 router = APIRouter(prefix="/inversion")
 
 
+class DipLine(BaseModel):
+    """A line drawn on the MD/TVD section: a bed boundary or bedding trend that crosses the well's curtain."""
+    md1_ft: float
+    tvd1_ft: float
+    md2_ft: float
+    tvd2_ft: float
+    anchor: bool = True   # also pull the nearest model boundary onto the line, not just the dip
+
+    @model_validator(mode="after")
+    def check_span(self):
+        if abs(self.md2_ft - self.md1_ft) < 1.0:
+            raise ValueError("a dip line must span at least 1 ft of MD")
+        return self
+
+
 class InversionRequest(BaseModel):
     run: str
     curves: list[str] = Field(min_length=1)
@@ -22,6 +37,13 @@ class InversionRequest(BaseModel):
     window_ft: float = Field(service.DEFAULT_WINDOW_FT, ge=2.0, le=200.0)
     rh_min_ohmm: float = Field(0.1, gt=0.0, le=10000.0)
     rh_max_ohmm: float = Field(1000.0, gt=0.0, le=10000.0)
+    lines: list[DipLine] = Field(default_factory=list, max_length=20)
+    dip_sigma_deg: float = Field(service.DEFAULT_DIP_SIGMA_DEG, gt=0.0, le=30.0)
+    boundary_sigma_ft: float = Field(service.DEFAULT_BOUNDARY_SIGMA_FT, gt=0.0, le=50.0)
+    downweight_misfit: bool = True   # curves that disagree with the line-constrained model lose weight
+    base_job_id: str | None = Field(None, max_length=64)   # re-run only part of this finished inversion
+    rerun_md_min_ft: float | None = None
+    rerun_md_max_ft: float | None = None
     force: bool = False   # recompute even when the store already has this request
 
     @model_validator(mode="after")
@@ -34,6 +56,10 @@ class InversionRequest(BaseModel):
             raise ValueError("window_ft must be at least slice_ft")
         if self.rh_max_ohmm <= self.rh_min_ohmm:
             raise ValueError("rh_max_ohmm must be greater than rh_min_ohmm")
+        if (self.rerun_md_min_ft is None) != (self.rerun_md_max_ft is None):
+            raise ValueError("give both rerun_md_min_ft and rerun_md_max_ft, or neither")
+        if self.rerun_md_min_ft is not None and self.rerun_md_max_ft <= self.rerun_md_min_ft:
+            raise ValueError("rerun_md_max_ft must be greater than rerun_md_min_ft")
         return self
 
 
@@ -53,6 +79,17 @@ def plan(request: InversionRequest) -> dict:
             "estimated_stations": int(span // request.step_ft) + 1,
             "estimated_slices": len(service.slice_centres(request.md_min_ft, request.md_max_ft, request.slice_ft)),
             "stations_per_window": int(request.window_ft // request.step_ft) + 1}
+
+
+@router.post("/section")
+def section(request: InversionRequest) -> dict:
+    """Well path and the channels the inversion would use over the interval, before anything is run, so dip lines
+    can be drawn on the section first."""
+    well_run = runs.get_run(request.run)
+    try:
+        return service.section_preview(well_run, request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/jobs")

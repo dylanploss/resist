@@ -25,7 +25,7 @@ from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_
                                       default_starts, interval_from_run, noise_estimate)
 
 SIDES = ("T", "R", "B", "L")
-GEO_SIDES = ("T", "R")          # a geosignal's bottom and left sectors are the negatives of top and right
+GEO_SIDES = ("T", "R", "L")     # bin minus the all-bin mean: bottom tracks top, but right and left differ off-axis
 KIND = {"T": "top", "R": "right", "B": "bottom", "L": "left"}
 CORRIDOR_M = 6.0
 # Ekofisk chalk beds can dip steeply relative to the well (e.g. Z-20); the 1.5D default of 15 degrees is too tight.
@@ -46,8 +46,8 @@ def channel_labels() -> list[str]:
 
 
 def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
-    """The 1.5D plan for the same selection, extended with right/left quadrants of every ZR image and the right sector
-    of every ZG image. A directly selected ``ZR..L``/``ZR..R`` curve brings in its whole image."""
+    """The 1.5D plan for the same selection, extended with right/left quadrants of every ZR and ZG image. A directly
+    selected ``ZR..L``/``ZR..R`` curve brings in its whole image."""
     labels = channel_labels()
     expanded = []
     for name in curves:
@@ -60,7 +60,7 @@ def build_plan(run, curves: list[str], calibration: bool = True) -> dict:
         src = sources[entry["label"]]
         if not isinstance(src, tuple):
             continue
-        extra = ("R", "L") if entry["kind"] == "top" else ("R",) if entry["kind"] == "geosignal" else ()
+        extra = ("R", "L") if entry["kind"] in ("top", "geosignal") else ()
         for side in extra:
             label = entry["label"][:-1] + side
             if label in labels and label not in used:
@@ -125,30 +125,26 @@ def _normalised_misfit(residual, sigma, weights):
 
 
 def remove_lateral_offset(data, labels, used) -> dict:
-    """Remove each image's interval-median right/left contrast, and each geosignal's right-sector median, in place.
+    """Remove each ZR and ZG image's interval-median right/left contrast, in place.
 
     On Z-20 every ZR image reads right ~17 % below left at all spacings and frequencies, including 16 in at 2 MHz,
     whose depth of investigation is a few inches; top/bottom shows no such offset. A bed cannot do that, so the offset
-    is treated as a tool/borehole effect (e.g. eccentricity). Lateral *changes* along the interval are kept.
+    is treated as a tool/borehole effect (e.g. eccentricity). Lateral *changes* along the interval are kept. ZR
+    contrasts are in log10 ohm-m, geosignal contrasts in deg/dB.
     """
     idx = {lab: j for j, lab in enumerate(labels)}
     valid = data.valid if data.valid is not None else np.ones_like(data.obs, bool)
     offsets = {}
     for lab in used:
-        if lab.startswith("ZR") and lab.endswith("R") and lab[:-1] + "L" in used:
+        if lab.startswith(("ZR", "ZG")) and lab.endswith("R") and lab[:-1] + "L" in used:
             r, left = idx[lab], idx[lab[:-1] + "L"]
             ok = valid[:, r] & valid[:, left]
             if ok.sum() >= 3:
                 d = float(np.median(data.obs[ok, r] - data.obs[ok, left]))
                 data.obs[:, r] -= d / 2
                 data.obs[:, left] += d / 2
-                offsets[lab[:-1]] = {"log10_right_over_left": round(d, 4), "right_over_left": round(10 ** d, 4)}
-        elif lab.startswith("ZG") and lab.endswith("R"):
-            j = idx[lab]
-            if valid[:, j].sum() >= 3:
-                d = float(np.median(data.obs[valid[:, j], j]))
-                data.obs[:, j] -= d
-                offsets[lab] = {"right_sector": round(d, 4), "unit": data.units[j]}
+                offsets[lab[:-1]] = ({"log10_right_over_left": round(d, 4), "right_over_left": round(10 ** d, 4)}
+                                     if lab.startswith("ZR") else {"right_minus_left": round(d, 4), "unit": data.units[r]})
     return offsets
 
 

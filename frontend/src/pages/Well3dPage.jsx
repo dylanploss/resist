@@ -279,7 +279,7 @@ export default function Well3dPage({ runs, active }) {
                 radii={view ? view.innerRadii : radii} shell={view?.shell} active={active} travel={travelProps}>
                 {inv.layers && (
                   <InversionLayers layers={inv.layers} data={data} path={path} exaggeration={exaggeration}
-                    radius={view ? view.radius : radius} md={md} />
+                    radius={view ? view.radius : radius} md={md} curtain={inv.curtain} />
                 )}
               </WellScene>
             </Suspense>
