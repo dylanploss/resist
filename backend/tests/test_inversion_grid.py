@@ -53,18 +53,19 @@ def test_expand_product_and_qc_curves():
                and p["step_ft"] == 4.0 and (p["md_min_ft"], p["md_max_ft"]) == (10.0, 130.0) for p in pts)
 
 
-def test_demo_grid_expands_and_first_point_is_stored_vc2_request():
-    """The demo grid's first point fingerprints to the committed VC-2 17202-17322 ft job (cache hit)."""
+def test_demo_grid_first_point_is_the_stored_vc2_request():
+    """The demo grid's first point is the committed VC-2 17202-17322 ft request (same request_key: a cache hit at
+    the same INVERSION_VERSION, otherwise the new result supersedes it)."""
     import json
     from backend.inversion import graph_io, service
     from backend.inversion.api import InversionRequest
     from backend.services import runs
     spec = json.loads((ROOT / "infra/vm/grids/demo.json").read_text())
-    stored = {r["fingerprint"] for r in graph_io.read_snapshot(ROOT / "data/graph/inversions.json")}
+    stored = {r.get("request_key") for r in graph_io.read_snapshot(ROOT / "data/graph/inversions.json")}
     req = dict(spec["runs"][0], intervals=spec["runs"][0]["intervals"][:1])
     pts = run_grid.expand({**spec, "runs": [req]}, runs.run_paths().keys(), runs.get_run,
                           lambda rid: __import__("backend.qc.selection", fromlist=["x"]).select_curves(
                               runs.get_run(rid))["selected"])
     request = InversionRequest(**pts[0]).model_dump(exclude={"force"})
     plan = service.build_plan(runs.get_run(request["run"]), request["curves"], request["calibration"])
-    assert service.fingerprint(request["run"], request, plan)[0] in stored
+    assert service.fingerprint(request["run"], request, plan)[1] in stored

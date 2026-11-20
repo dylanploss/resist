@@ -36,4 +36,10 @@ git -C "$APP" log --oneline -1
 # Without the role assignment the identity sees no subscription; run-grid.ps1 then passes the key over SSH stdin.
 az account show -o none 2>/dev/null || az login --identity --allow-no-subscriptions -o none
 az account set --subscription "$SUB" 2>/dev/null || echo "WARNING: VM identity has no access to $SUB (role assignment missing)"
+# Inversion server: systemd unit resist-backend on :8000 (restarted by update-server.ps1).
+sudo install -m 644 "$APP/infra/vm/resist-backend.service" /etc/systemd/system/resist-backend.service
+sudo sed -i 's/\r$//' /etc/systemd/system/resist-backend.service
+sudo systemctl daemon-reload
+sudo systemctl enable -q resist-backend
+systemctl is-active -q resist-backend || sudo systemctl start resist-backend
 echo "bootstrap ok: $(nproc) CPUs, $("$APP/.venv/bin/python" --version)"
