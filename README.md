@@ -48,7 +48,7 @@ The **3D well** tab draws one QC curve along the real well path (UTMX/UTMY + TVD
 |---------|--------------|
 | **Back / Play / Forward**, MD slider, **Follow / Free** | Travel along the well; Follow keeps the camera behind the travel point |
 | **Compare with** | Adds a second curve: the shallower one is the solid inner tube, the deeper one a transparent shell, each with its own colour bar |
-| **Inversion layers** | Shows the newest finished job from the **Inversion** tab as dipping boundary ribbons; a magenta glow marks where a boundary is within the curve's DOI, and the panel gives the nearest-boundary distance |
+| **Inversion layers** | Shows only the inversion result of the newest finished job from the **Inversion** tab (picker to switch): a vertical curtain hanging along the well over the inverted MD interval, coloured by inverted Rh vs TVD with the Inversion tab's curtain colour scale (1–300 Ω·m, log10; own colour bar). **± TVD** sets the curtain height, **Fade** hides the most uncertain cells first |
 | **Single well / Field** | Field draws all 11 runs at their UTM positions; hover highlights a well, a click opens it |
 | **★ Demo** | Scripted fly-through with captions at the most resistive and most conductive zone, the largest DOI spread (image curves) and TD; **Stop demo** or Escape ends it |
 | **Save PNG** | Downloads `<run>_<curve>_<md>ft.png` of the 3D canvas; `window.__well3dSnapshot()` returns the same image as a data URL |
@@ -57,7 +57,7 @@ Inversion jobs live in backend memory, so run an inversion after each backend re
 
 ![Compare with: ARH16P inner tube inside the ZRL48A shell on Z-19](docs/screenshots/well3d-compare.png)
 
-![Inversion layers on VC-2 with the magenta seen-boundary glow](docs/screenshots/well3d-layers.png)
+![Inversion curtain along VC-2, 17202–17322 ft, 5× exaggeration](docs/screenshots/well3d-curtain.png)
 
 ## Documentation
 
