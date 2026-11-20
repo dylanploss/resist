@@ -46,7 +46,7 @@ export function colorFn(spec) {
 
 // CSS gradient from zmin (bottom) to zmax (top) for the colour bar.
 export function cssGradient(spec) {
-  const stops = scaleStops(spec.scale, spec.reverse)
+  const stops = spec.stops ?? scaleStops(spec.scale, spec.reverse)
   const parts = stops.map(([p, c]) => `rgb(${c.join(',')}) ${(p * 100).toFixed(1)}%`)
   return `linear-gradient(to top, ${parts.join(', ')})`
 }

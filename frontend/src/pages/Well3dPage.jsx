@@ -10,8 +10,8 @@ import { CompareColorBar, CompareDoi, ComparePicker } from '../components/well3d
 import DemoCaption from '../components/well3d/DemoCaption.jsx'
 import FieldView from '../components/well3d/FieldView.jsx'
 import InversionLayers from '../components/well3d/InversionLayers.jsx'
-import { LayersControl, LayersReadout } from '../components/well3d/LayersControl.jsx'
-import { useInversionLayers } from '../components/well3d/inversionLayers.js'
+import { LayersControl } from '../components/well3d/LayersControl.jsx'
+import { CURTAIN_COLOR_SPEC, useInversionLayers } from '../components/well3d/inversionLayers.js'
 import { useCompare } from '../components/well3d/useCompare.js'
 import { useDemo } from '../components/well3d/useDemo.js'
 import { useSnapshot } from '../components/well3d/useSnapshot.js'
@@ -266,7 +266,7 @@ export default function Well3dPage({ runs, active }) {
             </ButtonGroup>
             <PickSelect label="Vertical exag." value={exaggeration} onChange={setExaggeration} options={EXAGGERATIONS} suffix="×" width={120} />
             <PickSelect label="Tube scale" value={tubeScale} onChange={setTubeScale} options={TUBE_SCALES} suffix="×" width={110} />
-            <LayersControl inv={inv} curveSpec={data.color} />
+            <LayersControl inv={inv} />
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, px: 1 }}>
             <Typography variant="caption" sx={{ whiteSpace: 'nowrap' }}>MD (ft)</Typography>
@@ -278,8 +278,7 @@ export default function Well3dPage({ runs, active }) {
               <WellScene ref={scene} data={view ? view.inner : data} path={path} radius={view ? view.radius : radius}
                 radii={view ? view.innerRadii : radii} shell={view?.shell} active={active} travel={travelProps}>
                 {inv.layers && (
-                  <InversionLayers layers={inv.layers} data={data} path={path} exaggeration={exaggeration}
-                    radius={view ? view.radius : radius} md={md} curtain={inv.curtain} />
+                  <InversionLayers layers={inv.layers} path={path} exaggeration={exaggeration} curtain={inv.curtain} />
                 )}
               </WellScene>
             </Suspense>
@@ -300,7 +299,6 @@ export default function Well3dPage({ runs, active }) {
                 {tubeScale > 1 && ` · ${tubeScale}× scale`}
               </Typography>
               {view && <CompareDoi layout={view} i={readout.i} />}
-              {inv.layers && <LayersReadout layers={inv.layers} data={data} path={path} md={md} />}
               <Typography variant="caption" color="text.secondary">
                 ↑/↓ travel · +/− zoom · space play · drag to orbit (Free)
               </Typography>
@@ -308,6 +306,11 @@ export default function Well3dPage({ runs, active }) {
             <Box sx={{ position: 'absolute', top: 8, right: 8, pointerEvents: 'none', display: 'flex', gap: 1 }}>
               {view && <CompareColorBar layout={view} data={view.inner === data ? view.outer : view.inner} />}
               <ColorBar spec={data.color} unit={data.unit} />
+              {inv.layers?.slices?.length > 0 && (
+                <Box data-testid="well3d-curtain-colorbar">
+                  <ColorBar spec={CURTAIN_COLOR_SPEC} label="Inversion Rh (Ω·m, log10)" showNull={false} />
+                </Box>
+              )}
             </Box>
             <DemoCaption caption={demo.caption} step={demo.step} total={demo.total} />
           </Box>
