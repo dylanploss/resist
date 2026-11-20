@@ -23,7 +23,7 @@ if (-not $ip) { throw "VM $VmName has no public IP (deallocated?)" }
 $sshOpts = @('-i', $key, '-o', 'StrictHostKeyChecking=accept-new')
 $Grid = $Grid -replace '\\', '/'
 if ($Status) {
-    & ssh @sshOpts "$AdminUser@$ip" "pgrep -af 'run_grid' | grep -v pgrep; tail -n 25 /opt/resist/logs/grid.log"
+    & ssh @sshOpts "$AdminUser@$ip" "pgrep -af 'backend[.]inversion[.]run_grid'; tail -n 25 /opt/resist/logs/grid.log"
     return
 }
 $cmd = "cd /opt/resist && mkdir -p logs && nohup .venv/bin/python -m backend.inversion.run_grid '$Grid' " +

@@ -31,7 +31,7 @@ $sshOpts = @('-i', $key, '-o', 'StrictHostKeyChecking=accept-new', '-o', 'Server
 function Invoke-Vm([string]$cmd) { & ssh @sshOpts $target $cmd }
 if (git -C $repo status --porcelain --untracked-files=no) { Write-Warning 'Uncommitted changes are NOT deployed (bundle = HEAD).' }
 
-$grid = Invoke-Vm "pgrep -f 'backend.inversion.run_grid' >/dev/null && echo running || true"
+$grid = Invoke-Vm "pgrep -f 'backend[.]inversion[.]run_grid' >/dev/null && echo running || true"
 if ($grid -match 'running' -and -not $Force) {
     throw 'A grid (run_grid) is running on the VM; updating /opt/resist now would mix code versions. Wait (run-grid.ps1 -Status) or use -Force.'
 }
