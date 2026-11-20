@@ -147,6 +147,15 @@ For efficient 1.5D EM inversion of the Halliburton ADR tool on Ekofisk data:
 - For now, assume all frequencies are present for all spacings (conservative)
 - Adjust when Halliburton clarifies
 
+**Long-spacing ZR 50/66/82 in geometry (guessed):**
+
+![Assumed ADR antenna layout with the guessed long-spacing receiver](figures/adr_long_spacing_geometry.svg)
+
+- The antenna layout for `ZR{M,L}{50,66,82}` is not confirmed. The forward model assumes that the uphole 16/32/48 in transmitters fire into a third tilted receiver 34 in downhole of the tool centre (`LS_RECEIVER_IN` in `backend/inversion/adr_forward.py`), so 50/66/82 = 16/32/48 + 34.
+- The measurement is the ratio of the near main receiver (R2, +4 in) to that receiver in the same look bin. No mirrored transmitter exists, so it is uncompensated and tool and borehole effects do not cancel.
+- These channels get half weight (`GUESSED_GEOMETRY_WEIGHT = 0.5` in `backend/inversion/service.py`). Check their misfit separately: high misfit on 50/66/82 alongside a good 16/32/48 fit points at the geometry, not the earth model. Treat boundaries that only these channels resolve with caution.
+- Open question 2 in [ADR_2D5_3D_plan.md](ADR_2D5_3D_plan.md) asks the vendor for the real layout.
+
 **Borehole and mandrel effects:**
 - Not in the 1D model; introduce nuisance gains per channel
 - Alternative: fit a simple borehole-correction term (e.g., resistivity-dependent calibration factor)

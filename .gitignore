@@ -24,3 +24,6 @@ out/
 *.html
 !frontend/index.html
 .env
+
+# Office lock files
+~$*
