@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Alert, Box, Button, Checkbox, Chip, CircularProgress, FormControl, FormControlLabel, IconButton, InputLabel, LinearProgress,
-  MenuItem, Paper, Select, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip, Typography,
+  MenuItem, Paper, Select, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField, ToggleButton,
+  ToggleButtonGroup, Tooltip, Typography,
 } from '@mui/material'
 import {
-  getAutoSelection, getInversionDefaults, getInversionJob, getSavedSelection, postInversionJob, postInversionPlan,
-  postInversionSection,
+  getAutoSelection, getInversionDefaults, getInversionJob, getInversionTargets, getSavedSelection, postInversionJob,
+  postInversionPlan, postInversionSection,
 } from '../api.js'
 import { useApi } from '../hooks/useApi.js'
 import ApiStatus from '../components/ApiStatus.jsx'
@@ -232,6 +233,11 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const [submitError, setSubmitError] = useState(null)
   const [colorRange, setColorRange] = useState(DEFAULT_COLOR_RANGE.map(String))
   const [force, setForce] = useState(false)
+  const targets = useApi(getInversionTargets, run || 'none')
+  const [target, setTarget] = useState('local')
+  const server = targets.data?.server
+  const serverReady = Boolean(server?.available)
+  const runOn = target === 'server' && serverReady ? 'server' : 'local'
   const [linesByRun, setLinesByRun] = useState(loadLines)
   useEffect(() => {
     try {
@@ -315,6 +321,7 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
   const start = () => {
     setSubmitError(null)
     let body = force ? { ...request, force: true } : { ...request }
+    if (runOn === 'server') body.target = 'server'
     if (applyLines) {
       body = { ...body, lines: lines.map((l) => ({ md1_ft: l.md1_ft, tvd1_ft: l.tvd1_ft, md2_ft: l.md2_ft,
         tvd2_ft: l.tvd2_ft, anchor: l.anchor })), dip_sigma_deg: lineOptions.dipSigma,
@@ -419,11 +426,25 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
                 {tooMany ? ` (max ${defaults.data.max_stations} stations / ${defaults.data.max_slices} slices: shorten the interval or increase the step/slice)` : ''}
               </Typography>
             )}
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mt: 1.5 }}>
               <Button variant="contained" onClick={start} disabled={!canRun}>
                 {jobActive ? 'Inverting…' : applyLines ? (partial ? 'Re-run lines range' : 'Run with dip lines') : 'Run inversion'}
               </Button>
               {jobActive && <CircularProgress size={18} />}
+              <ToggleButtonGroup size="small" exclusive value={runOn} aria-label="Run on"
+                onChange={(_, v) => v && setTarget(v)}>
+                <ToggleButton value="local" title="Compute in this backend">Local</ToggleButton>
+                <Tooltip title={serverReady
+                  ? `Compute on the inversion server ${server.url}${server.workers ? ` (${server.workers} inversion workers)` : ''}`
+                  : `Inversion server unavailable: ${server?.reason ?? targets.error?.message ?? 'checking…'}`}>
+                  <span>
+                    <ToggleButton value="server" disabled={!serverReady} selected={runOn === 'server'}
+                      onChange={(e, v) => setTarget(v)}>
+                      Server (72 cores)
+                    </ToggleButton>
+                  </span>
+                </Tooltip>
+              </ToggleButtonGroup>
               <Tooltip title="Stored results are returned instantly; tick to compute this request again and replace the stored one">
                 <FormControlLabel sx={{ ml: 'auto' }} label="Force re-run"
                   control={<Checkbox size="small" checked={force} onChange={(e) => setForce(e.target.checked)} />} />
@@ -433,14 +454,16 @@ function InversionPage({ runs, run, onRunChange, liveSelection, onOpenQc }) {
               <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1 }}>
                 {job.source === 'graph'
                   ? <Chip size="small" color="info" label="from graph" title="Returned from the inversion store without computing" />
-                  : <Chip size="small" variant="outlined" label="computed" />}
+                  : <Chip size="small" variant="outlined" label={job.target === 'server' ? 'computed on server' : 'computed'} />}
                 <Typography variant="caption" color="text.secondary">{job.message}</Typography>
               </Box>
             )}
             {jobActive && (
               <Box sx={{ mt: 1 }}>
                 <LinearProgress variant="determinate" value={100 * (job.progress || 0)} />
-                <Typography variant="caption" color="text.secondary">{job.message} · {job.elapsed_s}s</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {job.target === 'server' ? 'Server · ' : 'Local · '}{job.message} · {job.elapsed_s}s
+                </Typography>
               </Box>
             )}
             {submitError && <Alert severity="error" sx={{ mt: 1 }}>{submitError}</Alert>}

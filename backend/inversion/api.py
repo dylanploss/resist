@@ -1,9 +1,11 @@
 """HTTP endpoints for 1.5D inversion of a QC-selected curve set."""
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
-from backend.inversion import layers, service
+from backend.inversion import layers, remote, service
 from backend.services import runs
 
 router = APIRouter(prefix="/inversion")
@@ -45,6 +47,7 @@ class InversionRequest(BaseModel):
     rerun_md_min_ft: float | None = None
     rerun_md_max_ft: float | None = None
     force: bool = False   # recompute even when the store already has this request
+    target: Literal["local", "server"] = "local"   # where to compute; never part of the fingerprint
 
     @model_validator(mode="after")
     def check_interval(self):
@@ -69,6 +72,12 @@ def defaults(run: str) -> dict:
     return {"run": run, **service.suggested_interval(well_run), "channels": service.channel_labels(),
             "max_stations": service.MAX_STATIONS, "max_interval_ft": service.MAX_INTERVAL_FT,
             "slice_ft": service.DEFAULT_SLICE_FT, "window_ft": service.DEFAULT_WINDOW_FT, "max_slices": service.MAX_SLICES}
+
+
+@router.get("/targets")
+def targets() -> dict:
+    """Where an inversion can run: this backend, and the remote inversion server when configured and healthy."""
+    return {"local": {"available": True, "workers": service.WORKERS}, "server": remote.server_status()}
 
 
 @router.post("/plan")
@@ -96,7 +105,8 @@ def section(request: InversionRequest) -> dict:
 def submit(request: InversionRequest) -> dict:
     well_run = runs.get_run(request.run)
     try:
-        job = service.submit(request.run, well_run, request.model_dump(exclude={"force"}), force=request.force)
+        job = service.submit(request.run, well_run, request.model_dump(exclude={"force", "target"}),
+                             force=request.force, target=request.target)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return job.to_dict()

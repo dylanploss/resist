@@ -64,7 +64,7 @@ Implemented in `backend/app.py` (data and QC), `backend/qc/api.py` (QC visualiza
 
 | Method | Path | Request | Response |
 |--------|------|---------|----------|
-| GET | `/health` | none | `{"status": "ok"}` |
+| GET | `/health` | none | `{"status": "ok", "inversion_workers", "store", "cosmos", ..}` |
 | GET | `/runs` | none | `{"runs": [{"run", "label", "file", "well", "depth_min_m", "depth_max_m"}]}` |
 | GET | `/curves` | query `run` (required) | `{"run", "well", "curves": [<curve metadata rows>]}` |
 | GET | `/curves/{run}/data` | query `curves=A,B` (required) | `{"run", "well", "depth_m": [..], "curves": {"A": {"unit", "bins", "values": [..]}}}` |
@@ -79,6 +79,7 @@ Implemented in `backend/app.py` (data and QC), `backend/qc/api.py` (QC visualiza
 | POST | `/inversion/plan` | inversion request (below) | `{"used": [..], "ignored": [{"curve", "reason"}], "calibration", "warnings", "estimated_stations"}` |
 | POST | `/inversion/jobs` | inversion request (below) | Job: `{"id", "run", "status", "progress", "message", "request", "plan", "error", "elapsed_s", "result"}` |
 | GET | `/inversion/jobs/{id}` | none | Job; `result` is set when `status` is `done` |
+| GET | `/inversion/targets` | none | `{"local": {"available": true, "workers"}, "server": {"available", "url", "workers"?, "reason"?}}` |
 
 Details:
 - `/runs` reads only DLIS headers. `label` is the run id without `_RES_GEOSIGNAL`. `well` and the depth range are null if the header is unreadable, and the entry then has an `error` field.
@@ -106,6 +107,7 @@ Details:
   - Phase has weight 1. With `calibration` on, 2 MHz attenuation (averaged and top/bottom) has weight 0.5 and the Z-20 resistivity-dependent correction, and 500/125 kHz attenuation has weight 0.25.
   - Left/right bins, `ZR` 50/66/82 in images and conventional curves are listed under `ignored` with a reason.
   - `azimuthal` is true when directional channels are used.
+- Inversion target: the request may carry `"target": "local"` (default) or `"server"`. Like `force`, it is not part of the fingerprint (same request, same result wherever it runs). With `"server"`, a stored result is still returned at once; otherwise the request (without `target`) is forwarded to `<url>/inversion/jobs` on the inversion server and a local proxy job (same id) mirrors it: each `GET /inversion/jobs/{id}` polls the server for `status`, `progress`, `message` and `partial`, and on `done` the result is saved into the local store too. Server down, a rejected request or a failed remote job end the job in `error` with the reason. Jobs carry `"target"`. The URL comes from `RESIST_INVERSION_SERVER_URL` or `backend/inversion_server.json` (`{"url": null}` = no server); `/inversion/targets` reports it with a `GET <url>/health` check (2 s timeout, cached 30 s).
 - Jobs run one at a time in a background thread (status `queued` → `running` → `done` or `error`). Jobs are kept in memory only. `result` holds:
   - `md_ft`, `tvd_ft` and `inclination_deg`.
   - `curves`: one entry per channel with `label`, `group`, `kind`, `unit` (`ohm.m`, `deg`, `dB`), `source`, `obs`, `pred`, `used`, `weight`, `sigma`, `rms`, `rms_percent` (resistivities), `rms_normalised` and `mean_residual_percent`.
