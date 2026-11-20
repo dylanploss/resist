@@ -38,6 +38,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from backend.inversion import remote
 from backend.inversion.adr_forward import FT, FREQ_LETTER, R3_IN, ADRForward, LayerModel
 from backend.inversion.invert import (FitConfig, Inverter, LevelCorrection, Z20_ATTENUATION_CORRECTION,
                                       default_starts, interval_from_run, noise_estimate, worker_pool)
@@ -66,7 +67,7 @@ MIN_WINDOW_STATIONS = 3
 # "4": ADR spec geometry: R3 at +64 in for long spacing and geosignals (all 16-112 in), bin-minus-average geosignals.
 INVERSION_VERSION = "4"
 # Request fields that never change the result; every other field of the validated request is fingerprinted.
-NON_RESULT_FIELDS = frozenset({"force"})
+NON_RESULT_FIELDS = frozenset({"force", "target"})
 # Fields that only matter with dip lines / a base job; dropped otherwise so plain requests keep their fingerprint.
 LINE_FIELDS = ("lines", "dip_sigma_deg", "boundary_sigma_ft", "downweight_misfit")
 RERUN_FIELDS = ("base_job_id", "rerun_md_min_ft", "rerun_md_max_ft")
@@ -206,13 +207,18 @@ class Job:
     force: bool = False
     summary: dict | None = None        # listing info when the result is not loaded
     base: dict | None = None           # result of the base job a partial re-run copies its untouched slices from
+    target: str = "local"              # "local" (this backend) | "server" (proxied to the inversion server)
+    remote_id: str | None = None       # job id on the inversion server
+    polled: float = 0.0
+    poll_failures: int = 0
 
     def to_dict(self) -> dict:
         end = self.finished or time.time()
         return {"id": self.id, "run": self.run, "status": self.status, "progress": round(self.progress, 3),
                 "message": self.message, "request": self.request, "plan": public_plan(self.plan),
                 "error": self.error, "elapsed_s": round(end - (self.started or end), 1), "result": self.result,
-                "partial": self.partial if self.status == "running" else None, "source": self.source}
+                "partial": self.partial if self.status == "running" else None, "source": self.source,
+                "target": self.target}
 
 
 def public_plan(plan: dict) -> dict:
@@ -272,8 +278,9 @@ def record_from_job(job: Job, supersedes: list[str]) -> dict:
             "supersedes": supersedes, "superseded": False}
 
 
-def submit(run_id: str, run, request: dict, force: bool = False) -> Job:
-    request = {k: v for k, v in request.items() if k != "force"}
+def submit(run_id: str, run, request: dict, force: bool = False, target: str = "local") -> Job:
+    """Start (or return the stored/active) job; target "server" computes it on the remote inversion server."""
+    request = {k: v for k, v in request.items() if k not in NON_RESULT_FIELDS}
     plan = build_plan(run, request["curves"], request["calibration"])
     if not plan["used"]:
         raise ValueError("none of the selected curves can be inverted; select AR, ZR (16/32/48 in) or ZG curves in QC")
@@ -292,9 +299,15 @@ def submit(run_id: str, run, request: dict, force: bool = False) -> Job:
             log.warning("inversion store lookup failed: %s", type(exc).__name__)
         if rec is not None:
             return job_from_record(rec)
-    job = Job(job_id, run_id, request, plan, fingerprint=fp, request_key=request_key, force=force, base=base)
+    job = Job(job_id, run_id, request, plan, fingerprint=fp, request_key=request_key, force=force, base=base,
+              target=target)
     with _jobs_lock:
         _jobs[job.id] = job
+    if target == "server":
+        job.base = None
+        job.message = "sending to the inversion server"
+        remote.start(job, force)
+        return job
     threading.Thread(target=_execute, args=(job, run), daemon=True).start()
     return job
 
@@ -322,6 +335,8 @@ def get(job_id: str) -> Job | None:
     with _jobs_lock:
         job = _jobs.get(job_id)
     if job is not None:
+        if job.target == "server":
+            remote.poll(job)
         return job
     try:
         rec = _store().get(job_id)

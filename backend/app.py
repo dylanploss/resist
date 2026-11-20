@@ -22,6 +22,7 @@ from backend.services import runs
 from backend.qc.api import router as qc_router
 from backend.inversion.api import router as inversion_router
 from backend.inversion.facets_api import router as facets_router
+from backend.inversion import service as inversion_service
 from backend.inversion import store as inversion_store
 
 app = FastAPI(title="Resist backend")
@@ -86,12 +87,13 @@ def _nullable(values: np.ndarray) -> list:
 
 @app.get("/health")
 def health() -> dict:
-    """Always 200; ``store`` is cosmos|memory and ``cosmos`` ok|unavailable (with ``reason``)."""
+    """Always 200; ``store`` is cosmos|memory and ``cosmos`` ok|unavailable (with ``reason``); ``inversion_workers``
+    lets a proxying backend show this server's inversion process count."""
     try:
         store_status = inversion_store.status()
     except Exception as exc:  # health must never fail
         store_status = {"store": "memory", "cosmos": "unavailable", "reason": type(exc).__name__}
-    return {"status": "ok", **store_status}
+    return {"status": "ok", "inversion_workers": inversion_service.WORKERS, **store_status}
 
 
 @app.get("/runs")

@@ -38,6 +38,8 @@ Run the misfit study: `python -m backend.inversion.misfit_study --well Z-20 --md
 
 In the app, the **Inversion** tab inverts the curves chosen on the **QC selection** tab (button *Invert this selection →*) and shows the layered model, a curtain section, and measured vs modelled logs.
 
+**Run on Local / Server.** Next to *Run inversion*, pick where it computes: *Local* (this backend) or *Server (72 cores)*, the inversion server (the same backend on an Azure F72s v2 VM, port 8000). Set its URL with `RESIST_INVERSION_SERVER_URL=http://<vm>:8000` or in `backend/inversion_server.json` (`{"url": "http://<vm>:8000"}`), then restart the backend. *Server* is disabled, with the reason in its tooltip, when no URL is set or `GET <url>/health` fails. Stored results are still returned instantly; otherwise the local backend forwards the job, mirrors its progress and saves the finished result locally too. See `GET /inversion/targets` in [docs/api/contract.md](docs/api/contract.md).
+
 ## 3D well tab
 
 The **3D well** tab draws one QC curve along the real well path (UTMX/UTMY + TVD), in the QC tab's colours. The tube radius is a per-sample depth of investigation (DOI) estimate: skin depth `503·√(ρ/f)`, softly capped at 3 transmitter–receiver spacings. For 32-bin images the ring bulges toward the resistive (red) bins; ZG geosignals take that shape from the matching ZR image. Open it with **3D** on a QC row, a selection chip, or `?tab=3d&run=<run>&curve=<curve>`.

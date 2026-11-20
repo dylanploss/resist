@@ -63,6 +63,8 @@ export const postInversionSection = (body) => postJson('/inversion/section', bod
 
 export const postInversionJob = (body) => postJson('/inversion/jobs', body)
 
+export const getInversionTargets = () => request('/inversion/targets')
+
 export const getInversionJob = (id) => request(`/inversion/jobs/${encodeURIComponent(id)}`)
 
 export const getFacetDefaults = (run) => request(`/inversion3d/defaults?run=${encodeURIComponent(run)}`)
