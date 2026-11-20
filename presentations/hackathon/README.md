@@ -1,6 +1,6 @@
 # Hackathon presentation
 
-Slidev deck for the 4-minute hackathon demo (intro slide plus 2 content slides). Keep it up to date
+Slidev deck for the 4-minute hackathon demo (intro, problem, goal, what we built, how it works and the future). Keep it up to date
 as features land; speaker notes and timing live in the HTML comments at the end of each slide.
 
 ## Run

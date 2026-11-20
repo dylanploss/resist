@@ -21,6 +21,80 @@ something a geoscientist can trust and invert, in the browser.
 -->
 
 ---
+title: The problem
+---
+
+# The problem
+
+<div class="grid grid-cols-2 gap-8 text-base pt-4">
+<div>
+
+<div class="font-bold pb-2">Geosteering</div>
+
+- Wells are steered in real time on deep-reading resistivity
+- The inversion behind that picture decides where the bit goes
+
+</div>
+<div>
+
+<div class="font-bold pb-2">Inversion is service-company bound</div>
+
+- Resistivity inversions live inside each vendor's software
+- Vendors don't want to change methods or add features
+- **Operators can release data** to open up and improve this domain
+
+</div>
+</div>
+
+<!--
+~40 s.
+- Geosteering: the well path is adjusted while drilling, based on deep resistivity inversions.
+- Today that inversion is a black box owned by the service company. Same data, one method,
+  no room for operators to try alternatives or add features.
+- The lever is the data: operators own it and can release it, so anyone can build and compare inversions.
+-->
+
+---
+title: Our goal
+---
+
+# Our goal
+
+A web app where **the user runs the inversion**
+
+<div class="grid grid-cols-3 gap-5 text-sm pt-6">
+<div class="border rounded p-4">
+
+<div class="font-bold text-base pb-2">1 · QC input curves</div>
+
+From **~50 curves to 8**, with a reason for every kept and rejected curve
+
+</div>
+<div class="border rounded p-4">
+
+<div class="font-bold text-base pb-2">2 · Soft boundaries</div>
+
+Give the inversion soft boundaries (dip lines) to follow
+
+</div>
+<div class="border rounded p-4">
+
+<div class="font-bold text-base pb-2">3 · QC the result</div>
+
+Present QC metrics of the inversion: misfit, measured vs modelled logs
+
+</div>
+</div>
+
+<!--
+~30 s.
+- The user, not the vendor, drives the inversion.
+- QC: each run has ~50 curves; we rank them and keep 8 that are fit to invert.
+- Soft boundaries: interpreted dip lines guide the layered model without forcing it.
+- QC metrics: show how well the model explains the measured curves, so the result can be trusted.
+-->
+
+---
 title: What we built
 ---
 
@@ -38,7 +112,7 @@ title: What we built
 
 | Tab | What you get |
 |-----|--------------|
-| QC | Picks **5–10 curves**, a reason for each |
+| QC | **~50 → 8 curves**, a reason for each |
 | Inversion | 1.5D layered model, curtain, log fit |
 | Modelling | UDAR 1D model in the browser |
 | 3D well | Real well path, DOI-sized tube |
@@ -56,7 +130,7 @@ title: What we built
 <!--
 ~1 min.
 - Data: FastAPI reads the DLIS files directly; runs, curve inventory and curve data.
-- QC: scores every curve, keeps 5–10, explains every rejection.
+- QC: scores every curve, keeps 8 of ~50, explains every rejection.
 - Inversion: windowed Levenberg-Marquardt 1.5D fit of the QC selection: layered model, curtain section, measured vs modelled logs.
 - Modelling: unchanged copy of the UDAR_Bench compute core in a web worker.
 - 3D well: the curve along the real UTM/TVD path in the QC colours. The tube radius is a per-sample
@@ -67,10 +141,10 @@ Say: "The DOI is a physics estimate, not a vendor figure."
 -->
 
 ---
-title: How it works and what's next
+title: How it works and the future
 ---
 
-# How it works · what's next
+# How it works · the future
 
 <div class="grid grid-cols-5 gap-5 text-sm pt-1">
 <div class="col-span-2">
@@ -82,8 +156,9 @@ title: How it works and what's next
 - **Physics:** 1D layered VTI model at the true tool position
 - **3D:** inversion layers glow magenta where the DOI reaches them
 
-<div class="font-bold pt-3 pb-1">What's next</div>
+<div class="font-bold pt-3 pb-1">The future</div>
 
+- **Release ground-truth interpretations and inversions** alongside the data
 - Inversion over all 11 runs, stitched windows
 - 32-bin images reduced to mean, amplitude, phase
 - Vendor DOI figures instead of the estimate
