@@ -4,12 +4,12 @@ Graph model (every vertex has ``pk`` = run id, so a run is one logical partition
 
 * ``well|<name>`` -has_run-> ``run|<run>`` -has_station-> ``station|<run>|<md:.2f>`` (tvd_ft, inc_deg)
 * ``run`` -has_channel-> ``channel|<run>|<label>`` (group, kind, measurement, unit)
-* ``station`` -observed {label, value, updated_at}-> ``channel``: the measured value, stored once per station
+* ``station`` -observed {channel, value, updated_at}-> ``channel``: the measured value, stored once per station
 * ``inv|<fingerprint>`` (request, plan, meta, version, ...) -on_run-> run, -used {weight}-> channel,
   -has_layer {index}-> ``layer|<fingerprint>|<i>``, -fit {i, md_ft, data}-> station, -supersedes-> older inversion
 
 ``data`` on a fit edge is compact JSON with the station's ``obs``/``pred`` per channel and ``boundary_tvd`` per
-boundary, so a read rebuilds ``service.serialize``'s output exactly. Gremlin properties must be primitives.
+boundary, so a read rebuilds ``service.serialize``'s output exactly. Gremlin properties must be primitives, and ``label``/``id`` are reserved (a ``label`` property renames the element label on Cosmos).
 
 Rules: Gremlin **string scripts with bindings only** (Cosmos has no bytecode; values are never formatted into
 the script text, so there is no Gremlin injection). No multi-item transactions, so the inversion vertex is
@@ -58,6 +58,11 @@ def _status_of(exc) -> tuple[int | None, float]:
 
 def _first(v):
     return v[0] if isinstance(v, list) and len(v) == 1 else v
+
+
+def _id_part(text: str) -> str:
+    """Cosmos ids must not contain / \\ ? # (well names do, e.g. ``2/4-VC-2 Y3H``)."""
+    return str(text).translate({ord(c): "_" for c in "/\\?#"})
 
 
 class CosmosStore:
@@ -170,7 +175,7 @@ class CosmosStore:
                 changed += 1
                 stamp = ".property('updated_at', now)"
             script += (f".sideEffect(coalesce(outE('observed').hasId(e{n}), addE('observed').to(g.V(c{n}).has('pk', pk))"
-                       f".property('id', e{n}).property('pk', pk).property('label', l{n})).property('value', o{n}){stamp})")
+                       f".property('id', e{n}).property('pk', pk).property('channel', l{n})).property('value', o{n}){stamp})")
             b.update({f"e{n}": eid, f"c{n}": f"channel|{pk}|{c['label']}", f"l{n}": c["label"], f"o{n}": o})
         bt = [row[i] for row in result["model"]["boundary_tvd_ft"]]
         b["data"] = _dumps({"md": md, "tvd": tvd, "inc": inc, "obs": obs, "pred": pred, "b": bt})
@@ -186,12 +191,13 @@ class CosmosStore:
         self.delete(fp, run=pk)                            # same fingerprint: replace (force / repair / import)
 
         well = str(result.get("well") or "unknown")
-        self._upsert_vertex("well", f"well|{well}", pk, {"name": well})
+        wid = f"well|{_id_part(well)}"
+        self._upsert_vertex("well", wid, pk, {"name": well})
         self._upsert_vertex("run", f"run|{pk}", pk, {"run": pk})
-        self._upsert_edge("has_run", f"has_run|{pk}", f"well|{well}", f"run|{pk}", pk)
+        self._upsert_edge("has_run", f"has_run|{pk}", wid, f"run|{pk}", pk)
         for c in result["curves"]:
             cid = f"channel|{pk}|{c['label']}"
-            self._upsert_vertex("channel", cid, pk, {"label": c["label"], "group": c["group"], "kind": c["kind"],
+            self._upsert_vertex("channel", cid, pk, {"channel": c["label"], "group": c["group"], "kind": c["kind"],
                                                       "measurement": c["measurement"], "unit": c["unit"]})
             self._upsert_edge("has_channel", f"has_channel|{pk}|{c['label']}", f"run|{pk}", cid, pk)
 
@@ -350,6 +356,12 @@ class CosmosStore:
             if rec is not None:
                 out.append(rec)
         return out
+
+    def fingerprints(self, include_test: bool = False) -> dict[str, str]:
+        """{fingerprint: run} of complete inversions (cheap: no fit edges); used by the startup sync."""
+        rows = self.query("g.V().hasLabel('inversion').has('complete', true).project('f', 'r')"
+                          ".by('fingerprint').by('run')")
+        return {r["f"]: r["r"] for r in rows if include_test or not str(r["r"]).startswith("test|")}
 
     def count_stations(self, run):
         return int(self.query("g.V().has('pk', pk).hasLabel('station').count()", {"pk": run})[0])

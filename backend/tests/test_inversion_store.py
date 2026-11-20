@@ -132,6 +132,140 @@ class SnapshotStoreContract(StoreContract, unittest.TestCase):
         self.assertEqual([r["fingerprint"][0] for r in recs], ["a", "b"])
 
 
+class FakeCosmos(store.MemoryStore):
+    """In-memory stand-in for CosmosStore; ``fail`` makes every call raise, ``delay`` makes reads slow."""
+
+    kind = "cosmos"
+
+    def __init__(self):
+        super().__init__()
+        self.fail, self.delay, self.saves = False, 0.0, 0
+
+    def __getattribute__(self, name):
+        if name in ("find", "get", "save", "delete", "list_finished", "older_versions", "count_stations",
+                    "fingerprints", "ping", "all_records") and object.__getattribute__(self, "fail"):
+            raise ConnectionError("cosmos down")
+        return object.__getattribute__(self, name)
+
+    def _slow(self):
+        time.sleep(self.delay)
+
+    def find(self, fingerprint, run=None):
+        self._slow()
+        return super().find(fingerprint, run)
+
+    def get(self, job_id):
+        self._slow()
+        return super().get(job_id)
+
+    def save(self, record):
+        self.saves += 1
+        return super().save(record)
+
+    def fingerprints(self):
+        return {r["fingerprint"]: r["run"] for r in self.all_records()}
+
+
+class DualStoreContract(StoreContract, unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "inversions.json"
+        self.cosmos = FakeCosmos()
+        self.store, self.run = store.DualStore(self.cosmos, store.SnapshotStore(self.path), read_timeout_s=0.5), "runA"
+
+    def test_reads_prefer_cosmos(self):
+        rec = make_record(self.run)
+        self.store.save(rec)
+        self.store.snapshot.delete(rec["fingerprint"])                # only Cosmos has it now
+        self.assertEqual(self.store.find(rec["fingerprint"])["fingerprint"], rec["fingerprint"])
+        self.assertEqual(self.store.get(rec["job_id"])["job_id"], rec["job_id"])
+        self.assertEqual(len(self.store.list_finished(self.run)), 1)
+
+    def test_falls_back_to_snapshot_on_error_and_timeout(self):
+        rec = make_record(self.run)
+        self.store.save(rec)
+        self.cosmos.fail = True
+        with self.assertLogs("resist.store", "WARNING") as logs:
+            self.assertEqual(self.store.find(rec["fingerprint"])["fingerprint"], rec["fingerprint"])
+            self.assertEqual(len(self.store.list_finished(self.run)), 1)
+        self.assertEqual(len(logs.output), 1)                          # one warning per transition
+        self.assertEqual(self.store.status()["cosmos"], "unavailable")
+        self.cosmos.fail, self.cosmos.delay = False, 2.0
+        t0 = time.time()
+        self.assertEqual(self.store.get(rec["job_id"])["job_id"], rec["job_id"])
+        self.assertLess(time.time() - t0, 1.5)
+        self.assertIn("timeout", self.store.status()["reason"])
+        self.cosmos.delay = 0.0
+        self.store.ping()
+        self.assertEqual(self.store.status()["cosmos"], "ok")
+
+    def test_writes_go_to_both(self):
+        rec = make_record(self.run)
+        self.assertNotIn("warning", self.store.save(rec))
+        self.assertIsNotNone(self.cosmos.find(rec["fingerprint"]))
+        self.assertEqual(len(graph_io.read_snapshot(self.path)), 1)
+
+    def test_one_side_failing_keeps_the_other(self):
+        a = make_record(self.run)
+        self.cosmos.fail = True
+        with self.assertLogs("resist.store", "WARNING"):
+            info = self.store.save(a)
+        self.assertIn("Cosmos save failed", info["warning"])
+        self.assertIn("Cosmos save failed", self.store.status()["last_write_warning"])
+        self.assertEqual(len(graph_io.read_snapshot(self.path)), 1)
+        self.cosmos.fail = False
+        b = make_record(self.run)
+        with mock.patch.object(self.store.snapshot, "save", side_effect=OSError("disk full")), \
+                self.assertLogs("resist.store", "WARNING"):
+            info = self.store.save(b)
+        self.assertIn("snapshot save failed", info["warning"])
+        self.assertIsNotNone(self.cosmos.find(b["fingerprint"]))
+
+    def test_both_sides_failing_raises(self):
+        self.cosmos.fail = True
+        with mock.patch.object(self.store.snapshot, "save", side_effect=OSError("disk full")), \
+                self.assertLogs("resist.store", "WARNING"), self.assertRaises(RuntimeError):
+            self.store.save(make_record(self.run))
+
+    def test_sync_is_two_way_and_idempotent(self):
+        local, remote = make_record(self.run), make_record(self.run, md_min=2000.0)
+        self.store.snapshot.save(local)
+        self.cosmos.save(remote)
+        self.store.sync()
+        self.assertEqual(self.store.sync_status, "done: pushed 1, pulled 1")
+        self.assertEqual(set(self.cosmos.fingerprints()), {local["fingerprint"], remote["fingerprint"]})
+        self.assertEqual(len(graph_io.read_snapshot(self.path)), 2)
+        saves = self.cosmos.saves
+        self.store.sync()
+        self.assertEqual((self.store.sync_status, self.cosmos.saves), ("done: pushed 0, pulled 0", saves))
+
+    def test_sync_failure_is_reported_not_raised(self):
+        self.cosmos.fail = True
+        with self.assertLogs("resist.store", "WARNING"):
+            self.store.sync()
+        self.assertTrue(self.store.sync_status.startswith("failed"))
+
+    def test_factory_builds_dual_store_and_health_reports_it(self):
+        settings = cosmos_config.CosmosSettings(endpoint="wss://x/", key="k", key_source="env", account="acc")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"RESIST_STORE": "", "COSMOS_ENABLED": "true"}), \
+                mock.patch.object(store, "SNAPSHOT_PATH", Path(tmp) / "inversions.json"), \
+                mock.patch.object(cosmos_config, "resolve", return_value=settings), \
+                mock.patch("backend.inversion.cosmos_store.CosmosStore", return_value=self.cosmos):
+            store.set_store(None)
+            self.addCleanup(store.set_store, None)
+            built = store.get_store()
+            for _ in range(100):
+                if built.sync_status.startswith("done"):
+                    break
+                time.sleep(0.01)
+            body = TestClient(app).get("/health").json()
+        self.assertIsInstance(built, store.DualStore)
+        self.assertEqual((body["store"], body["cosmos"], body["snapshot_records"]), ("cosmos+snapshot", "ok", 0))
+        self.assertEqual(body["sync"], "done: pushed 0, pulled 0")
+
+
 @unittest.skipUnless(os.environ.get("COSMOS_GREMLIN_ENDPOINT"), "Cosmos integration: set COSMOS_GREMLIN_ENDPOINT")
 class CosmosStoreContract(StoreContract, unittest.TestCase):
     @classmethod
@@ -390,6 +524,16 @@ class RecordingClient:
 
 
 class CosmosScriptTests(unittest.TestCase):
+    def test_ids_have_no_cosmos_reserved_characters(self):
+        client = RecordingClient()
+        rec = make_record("runA")
+        rec["result"]["well"] = "2/4-VC-2 Y3H"
+        CosmosStore(self.settings(), client_factory=lambda: client).save(rec)
+        ids = [v for _, b in client.calls for k, v in b.items() if isinstance(v, str) and "|" in v]
+        self.assertIn("well|2_4-VC-2 Y3H", ids)
+        self.assertFalse([i for i in ids if any(c in i for c in "/\\?#")])
+        self.assertFalse([s for s, _ in client.calls if "property('label'" in s])   # Cosmos: label is reserved
+
     def settings(self):
         return cosmos_config.CosmosSettings(endpoint="wss://x/", key="k")
 
@@ -500,7 +644,7 @@ class SecretTests(unittest.TestCase):
     def test_tracked_config_has_no_key(self):
         cfg = json.loads((REPO / "backend" / "cosmos.config.json").read_text(encoding="utf-8-sig"))
         self.assertFalse({k for k in cfg if "key" in k.lower() and k != "partition_key"})
-        self.assertFalse(cfg.get("enabled", False), "Cosmos stays disabled while the tenant policy blocks it")
+        self.assertTrue(cfg.get("enabled", False), "Cosmos is live since 2026-11-20")
 
     @unittest.skipUnless(os.environ.get("COSMOS_GREMLIN_KEY") or os.environ.get("RESIST_KEY_LEAK_CHECK"),
                          "needs a key: set COSMOS_GREMLIN_KEY or RESIST_KEY_LEAK_CHECK=1 (fetches with az)")

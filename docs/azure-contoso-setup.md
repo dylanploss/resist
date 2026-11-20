@@ -2,26 +2,34 @@
 
 This guide is for David and Dylan, for tomorrow morning.
 
-## Status for the hackathon: snapshot only (option C)
+## Status: Cosmos DB graph is LIVE (since 2026-11-20)
 
-The Cosmos DB account `resist-graph-olnz` exists, but a Contoso tenant policy
-(`MCAPSGovDeployPolicies` → "SFI-NS2.2.1 Secure PaaS Resources") forces public network access off, so
-laptops can't connect to it. For the hackathon, inversion results are shared through git instead:
+The Cosmos DB account `resist-graph-olnz` has public network access enabled. By agreement with
+Microsoft, `resist-hackathon-rg` carries the tags `SecurityControl=Ignore` and `CostControl=Ignore`, which
+exempt it from the tenant policy that had switched public access off.
 
-- The backend stores every finished inversion in memory and in `data/graph/inversions.json`. That file
-  is committed.
+- The backend reads inversions from the shared Cosmos graph first and writes every finished inversion
+  to the graph **and** to `data/graph/inversions.json` (the committed JSON backup).
+- On start, the backend pushes snapshot entries that are missing from the graph (for example ones you
+  pulled from git) and pulls graph entries that are missing from the snapshot.
 - A request that's already stored comes back instantly (`"source": "graph"`). Tick **Force re-run** to
   recalculate.
-- **To share your results:** run inversions, then commit and push `data/graph/inversions.json`.
-  **To get the others' results:** `git pull` and restart the backend.
-- If two people push snapshot changes at the same time, keep both sides in the merge and restart the
-  backend. Inversions are keyed by fingerprint, so entries don't clash.
-- `/health` shows `"store": "snapshot"`, and `cosmos` says it is disabled because of the tenant policy.
+- `/health` shows `"store": "cosmos+snapshot"`, `"cosmos": "ok"`, `snapshot_records` and `sync`.
+- **Without an Azure login** (or if Cosmos fails), the app keeps working from the snapshot:
+  `/health` shows `"cosmos": "unavailable"` with the reason.
+- Commit and push changes to `data/graph/inversions.json`, so the JSON backup stays shared.
 
-**You don't need an Azure login for the app today.** The steps below are only needed once a policy
-exemption for `resist-hackathon-rg` is granted and `"enabled": true` is set in
-`backend/cosmos.config.json`. They're also useful if you want to look at the Azure resources. With
-Cosmos enabled, the backend fetches the key with your own `az` login, and nothing secret is committed.
+**Teammates, after `git pull`:**
+
+```powershell
+az login --tenant 704b7209-73fa-43f5-8e84-21cd65fe5697 --use-device-code
+az account set --subscription 2668e2c1-a6ab-42da-8bcf-edd50a6fc470
+.venv\Scripts\python -m pip install -r backend\requirements.txt
+.venv\Scripts\python -m backend.app
+```
+
+Then check that <http://localhost:5000/health> shows `"cosmos": "ok"`. The backend fetches the key with
+your own `az` login (or from `COSMOS_GREMLIN_KEY`), and nothing secret is committed.
 
 ## Before you start
 
@@ -108,8 +116,7 @@ npm install
 npm run dev
 ```
 
-Check that <http://localhost:5000/health> shows `"store": "cosmos"` and `"cosmos": "ok"` (only once
-Cosmos is enabled; today it shows `"store": "snapshot"`), then open
+Check that <http://localhost:5000/health> shows `"store": "cosmos+snapshot"` and `"cosmos": "ok"`, then open
 <http://localhost:5173>. On Mac, use `.venv/bin/python` instead of `.venv\Scripts\python`.
 
 ## 5. Optional: the Azure MCP server in VS Code

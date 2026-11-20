@@ -1,9 +1,10 @@
 """Where finished inversions live.
 
-* ``SnapshotStore`` (default): memory, loaded from and written to the committed ``data/graph/inversions.json``.
-* ``CosmosStore`` (``backend.inversion.cosmos_store``): the shared Cosmos DB graph, only when ``COSMOS_ENABLED=true``
-  or ``"enabled": true`` in ``backend/cosmos.config.json``. Today the tenant policy SFI-NS2.2.1 forces public
-  network access off on the account, so it is disabled by default.
+* ``DualStore`` (default when Cosmos is reachable): the shared Cosmos DB graph (``backend.inversion.cosmos_store``)
+  for reads, with every write also going to the snapshot below; falls back to the snapshot if Cosmos fails.
+* ``SnapshotStore`` (Cosmos disabled or unreachable): memory, loaded from and written to the committed
+  ``data/graph/inversions.json``. Cosmos is used when ``COSMOS_ENABLED=true`` or ``"enabled": true`` in
+  ``backend/cosmos.config.json`` and a key resolves (env or ``az`` login).
 * ``MemoryStore``: no persistence (``RESIST_STORE=memory``, tests).
 
 A *record* is the unit both stores save and return::
@@ -163,10 +164,156 @@ class SnapshotStore(MemoryStore):
         super().delete(fingerprint, run)
         self._write()
 
+    def save_many(self, records):
+        """Add records with a single file write (startup sync)."""
+        for rec in records:
+            MemoryStore.save(self, rec)
+        if records:
+            self._write()
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._records)
+
+
+class DualStore:
+    """Cosmos graph first, snapshot always: the default when Cosmos is reachable.
+
+    * Reads ask Cosmos (``READ_TIMEOUT_S``); on error/timeout, or when Cosmos lacks the record, the snapshot answers
+      and the store is marked degraded (one warning per transition).
+    * Writes go to Cosmos, then to the snapshot file; one failing side never loses the other. The failure is
+      returned as ``warning`` (shown in the job message) and kept as ``last_write_warning`` (shown in /health).
+    * ``sync()`` (background, at startup) pushes snapshot records missing from Cosmos and pulls Cosmos records
+      missing from the snapshot, comparing fingerprints first.
+    """
+
+    kind = "cosmos+snapshot"
+
+    def __init__(self, cosmos, snapshot: SnapshotStore, read_timeout_s: float | None = None):
+        from concurrent.futures import ThreadPoolExecutor
+        self.cosmos, self.snapshot = cosmos, snapshot
+        self.read_timeout_s = float(read_timeout_s if read_timeout_s is not None
+                                    else os.environ.get("COSMOS_READ_TIMEOUT_S", 5))
+        self._pool = ThreadPoolExecutor(4, thread_name_prefix="cosmos-read")
+        self.cosmos_ok, self.reason, self.last_write_warning = True, None, None
+        self.sync_status = "pending"
+
+    # --- health --------------------------------------------------------------------------------------------
+
+    def _mark(self, ok: bool, reason: str | None = None):
+        if ok and not self.cosmos_ok:
+            log.info("Cosmos graph reachable again")
+        elif not ok and self.cosmos_ok:
+            log.warning("Cosmos graph unavailable (%s); serving from the snapshot", reason)
+        self.cosmos_ok, self.reason = ok, (None if ok else reason)
+
+    def _cosmos(self, name, *args, timeout=True):
+        try:
+            if timeout:
+                out = self._pool.submit(getattr(self.cosmos, name), *args).result(timeout=self.read_timeout_s)
+            else:
+                out = getattr(self.cosmos, name)(*args)
+        except Exception as exc:
+            from concurrent.futures import TimeoutError as FutureTimeout
+            what = f"timeout after {self.read_timeout_s:g} s" if isinstance(exc, FutureTimeout) else type(exc).__name__
+            self._mark(False, f"{name} failed: {what}: {str(exc)[:120]}".rstrip(": "))
+            raise
+        self._mark(True)
+        return out
+
+    def ping(self):
+        self._cosmos("ping")
+
+    # --- reads ---------------------------------------------------------------------------------------------
+
+    def _read(self, name, *args):
+        try:
+            return self._cosmos(name, *args)
+        except Exception:
+            return None
+
+    def find(self, fingerprint, run=None):
+        return self._read("find", fingerprint, run) or self.snapshot.find(fingerprint, run)
+
+    def get(self, job_id):
+        return self._read("get", job_id) or self.snapshot.get(job_id)
+
+    def list_finished(self, run):
+        remote = self._read("list_finished", run)
+        if remote is None:
+            return self.snapshot.list_finished(run)
+        seen = {r["fingerprint"] for r in remote}
+        extra = [r for r in self.snapshot.list_finished(run) if r["fingerprint"] not in seen]   # not yet synced
+        return sorted(remote + extra, key=lambda r: r.get("finished") or 0, reverse=True)
+
+    def older_versions(self, run, request_key, version):
+        remote = self._read("older_versions", run, request_key, version) or []
+        return sorted(set(remote) | set(self.snapshot.older_versions(run, request_key, version)))
+
+    def all_records(self):
+        remote = self._read("all_records")
+        return remote if remote is not None else self.snapshot.all_records()
+
+    def count_stations(self, run):
+        n = self._read("count_stations", run)
+        return n if n is not None else self.snapshot.count_stations(run)
+
+    # --- writes --------------------------------------------------------------------------------------------
+
+    def _both(self, name, *args) -> dict:
+        info, errors = {}, []
+        try:
+            info = self._cosmos(name, *args, timeout=False) or {}
+        except Exception as exc:
+            errors.append(f"Cosmos {name} failed ({type(exc).__name__})")
+        try:
+            getattr(self.snapshot, name)(*args)
+        except Exception as exc:
+            errors.append(f"snapshot {name} failed ({type(exc).__name__})")
+        if len(errors) == 2:
+            raise RuntimeError("; ".join(errors))
+        if errors:
+            self.last_write_warning = errors[0]
+            log.warning("inversion store: %s; the other side was written", errors[0])
+            info = {**info, "warning": errors[0]}
+        return info
+
+    def save(self, record):
+        return self._both("save", record)
+
+    def delete(self, fingerprint, run=None):
+        self._both("delete", fingerprint, run)
+
+    # --- startup sync --------------------------------------------------------------------------------------
+
+    def sync(self) -> dict:
+        """Idempotent two-way fill by fingerprint. Never raises; result also kept in ``sync_status``."""
+        self.sync_status = "running"
+        try:
+            remote = self.cosmos.fingerprints()                      # {fingerprint: run}, complete only
+            local = {r["fingerprint"]: r for r in self.snapshot.all_records()}
+            push = sorted((r for fp, r in local.items() if fp not in remote), key=lambda r: r.get("finished") or 0)
+            for rec in push:
+                self.cosmos.save(rec)
+            pulled = [r for r in (self.cosmos.find(fp, run) for fp, run in remote.items() if fp not in local) if r]
+            self.snapshot.save_many(pulled)
+            self.sync_status = f"done: pushed {len(push)}, pulled {len(pulled)}"
+            self._mark(True)
+        except Exception as exc:
+            self.sync_status = f"failed: {type(exc).__name__}: {str(exc)[:120]}"
+            log.warning("inversion store sync failed: %s", self.sync_status)
+        log.info("inversion store sync %s", self.sync_status)
+        return {"status": self.sync_status}
+
+    def status(self) -> dict:
+        return {"store": self.kind, "cosmos": "ok" if self.cosmos_ok else "unavailable", "reason": self.reason,
+                "snapshot_records": self.snapshot.count(), "sync": self.sync_status,
+                "last_write_warning": self.last_write_warning}
+
 
 # --- factory -----------------------------------------------------------------------------------------------
 
-COSMOS_DISABLED = "disabled (tenant policy SFI-NS2.2.1 blocks public network access)"
+COSMOS_DISABLED = "disabled (COSMOS_ENABLED=false or \"enabled\": false in backend/cosmos.config.json)"
 _store: InversionStore | None = None
 _status: dict = {"store": "snapshot", "cosmos": COSMOS_DISABLED}
 _init_lock = threading.Lock()
@@ -185,7 +332,7 @@ def cosmos_enabled(environ=None) -> bool:
 
 def _snapshot_store() -> SnapshotStore:
     try:
-        return SnapshotStore()
+        return SnapshotStore(SNAPSHOT_PATH)
     except Exception as exc:  # a broken snapshot must not stop the backend
         log.warning("could not load inversion snapshot %s: %s; starting empty", SNAPSHOT_PATH, exc)
         store = SnapshotStore.__new__(SnapshotStore)
@@ -210,11 +357,13 @@ def _build() -> InversionStore:
             from backend.inversion.cosmos_store import CosmosStore
             store = CosmosStore(settings)
             store.ping()
-            _status.update(store="cosmos", cosmos="ok", reason=None, account=settings.account,
+            dual = DualStore(store, _snapshot_store())
+            _status.update(store=dual.kind, cosmos="ok", reason=None, account=settings.account,
                            key_source=settings.key_source)
-            log.info("inversion store: Cosmos DB graph %s (%s/%s, key from %s)", settings.account,
-                     settings.database, settings.graph, settings.key_source)
-            return store
+            log.info("inversion store: Cosmos DB graph %s (%s/%s, key from %s) + snapshot %s", settings.account,
+                     settings.database, settings.graph, settings.key_source, dual.snapshot.path)
+            threading.Thread(target=dual.sync, name="store-sync", daemon=True).start()
+            return dual
         except Exception as exc:
             reason = f"Cosmos DB graph unreachable: {type(exc).__name__}: {str(exc)[:200]}"
     else:
@@ -240,8 +389,16 @@ def set_store(store: InversionStore | None) -> None:
     global _store
     _store = store
     if store is not None:
-        _status.update(store=store.kind, cosmos="ok" if store.kind == "cosmos" else "disabled (store set explicitly)",
+        _status.update(store=store.kind,
+                       cosmos="ok" if store.kind in ("cosmos", DualStore.kind) else "disabled (store set explicitly)",
                        reason=None)
+
+
+def _quiet_ping(store) -> None:
+    try:
+        store.ping()
+    except Exception:
+        pass                                           # DualStore records the failure as degraded
 
 
 def status() -> dict:
@@ -253,6 +410,13 @@ def status() -> dict:
             return {"store": "snapshot", "cosmos": "unavailable", "reason": "connecting to Cosmos DB"}
         get_store()
     store = _store
+    if isinstance(store, DualStore):
+        if time.time() - _last_ping[0] > PING_INTERVAL_S:
+            _last_ping[0] = time.time()
+            threading.Thread(target=_quiet_ping, args=(store,), name="store-ping", daemon=True).start()
+        out = {k: v for k, v in _status.items() if v is not None}
+        out.update({k: v for k, v in store.status().items() if v is not None})
+        return out
     if store.kind == "cosmos" and time.time() - _last_ping[0] > PING_INTERVAL_S:
         _last_ping[0] = time.time()
         try:

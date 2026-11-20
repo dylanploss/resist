@@ -359,6 +359,8 @@ def save_result(job: Job) -> str:
         parts.append(f"supersedes {len(older)} older version(s)")
     if info.get("observed_updated"):
         parts.append(f"{info['observed_updated']} stored observations differed and were updated")
+    if info.get("warning"):
+        parts.append(f"warning: {info['warning']}")
     return "; ".join(parts)
 
 
