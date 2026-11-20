@@ -73,7 +73,7 @@ if ($KeyFromMyLogin) {
         --type keys --query primaryMasterKey -o tsv
     if (-not $cosmosKey) { throw 'could not read the Cosmos key with your az login' }
     "COSMOS_GREMLIN_KEY=$cosmosKey" | & ssh @sshOpts $target `
-        "sudo sh -c 'umask 077; mkdir -p /etc/resist; cat > /etc/resist/backend.env'"
+        "sudo sh -c 'umask 077; mkdir -p /etc/resist; tr -d ''\r'' > /etc/resist/backend.env'"
     Remove-Variable cosmosKey
     Write-Host 'Cosmos key written to /etc/resist/backend.env on the VM (root-only).'
     $Restart = $true

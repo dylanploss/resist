@@ -26,7 +26,7 @@ if ($Status) {
     & ssh @sshOpts "$AdminUser@$ip" "pgrep -af 'backend[.]inversion[.]run_grid'; tail -n 25 /opt/resist/logs/grid.log"
     return
 }
-$cmd = "cd /opt/resist && mkdir -p logs && nohup .venv/bin/python -m backend.inversion.run_grid '$Grid' " +
+$cmd = "cd /opt/resist && mkdir -p logs && setsid nohup .venv/bin/python -m backend.inversion.run_grid '$Grid' " +
        "--parallel '$Parallel' > logs/grid.log 2>&1 < /dev/null & sleep 20; tail -n 20 /opt/resist/logs/grid.log"
 
 # The VM identity reads the Cosmos key itself when it has Contributor on the RG. If it does not (granting needs
@@ -40,7 +40,7 @@ if (-not $hasRole -or $PassKey) {
     $cosmosKey = az cosmosdb keys list --subscription $cfg.subscription_id -g $cfg.resource_group -n $cfg.account `
         --type keys --query primaryMasterKey -o tsv
     if (-not $cosmosKey) { throw 'could not read the Cosmos key with your az login' }
-    $cmd = 'IFS= read -r COSMOS_GREMLIN_KEY && export COSMOS_GREMLIN_KEY && ' + $cmd
+    $cmd = 'IFS= read -r K; COSMOS_GREMLIN_KEY=$(printf %s "$K" | tr -d ''\r''); unset K; export COSMOS_GREMLIN_KEY; ' + $cmd  # read first: a backgrounded chain gets /dev/null as stdin
     $cosmosKey | & ssh @sshOpts "$AdminUser@$ip" $cmd
     Remove-Variable cosmosKey
     return
