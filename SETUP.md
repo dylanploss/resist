@@ -4,6 +4,17 @@ Commands for macOS and Windows. Run every command from the repo root unless a st
 
 Verified on Windows 11 with Python 3.13. The macOS commands follow the same steps but have not been verified on a Mac yet.
 
+## Quick start (after the one-time setup below)
+
+Double-click **`start-app.bat`** (Windows) or **`start-app.command`** (macOS) in the repo folder. It starts the backend on
+port 5001 and the frontend on port 5173, installs the frontend packages on the first run, and opens
+http://localhost:5173. A server that is already running is left alone. Logs go to `out/logs/`.
+
+- Windows: each server runs in its own minimised window, "Resist backend" and "Resist frontend"; close that window to
+  stop the server. The launcher needs the Python environment from the steps below (`.venv` at the repo root).
+- macOS: the servers keep running after the Terminal window closes. If macOS blocks the file, right-click it and
+  choose Open once.
+
 ## Prerequisites
 
 | Tool | Version | Check |
